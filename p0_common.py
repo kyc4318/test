@@ -78,18 +78,49 @@ def wrap180(x: float) -> float:
     return float((float(x) + 90.0) % 180.0 - 90.0)
 
 
+def wrap360(x: float) -> float:
+    """Map an angle error into (-180, 180] -- no symmetry assumed."""
+    return float((float(x) + 180.0) % 360.0 - 180.0)
+
+
 def align_error(est: float, true: float, period: float = 180.0) -> float:
-    """Minimal alignment error modulo the carrier symmetry period."""
+    """Minimal alignment error modulo the carrier symmetry period.
+
+    .. warning::
+       The default ``period=180`` assumes the carrier is **real-valued**, i.e.
+       that a 180-degree flip is an equivalent alignment (Proposition 2 of the
+       manuscript).  SectorSync's complex phase mask exists precisely to break
+       that equivalence, so for this carrier the mod-180 convention *understates*
+       failure: an estimate at ``true + 180`` is scored 0 error while decoding
+       the wrong bits.  Use :func:`align_error360` for pass/fail decisions and
+       keep mod-180 only to stay comparable with older numbers.
+    """
     d = (float(est) - float(true)) % period
     return float(min(d, period - d))
+
+
+def align_error360(est: float, true: float) -> float:
+    """Full-circle alignment error ``|wrap360(est - true)|`` in [0, 180]."""
+    return abs(wrap360(float(est) - float(true)))
 
 
 def signed_error(est: float, true: float) -> float:
     return wrap180(float(est) - float(true))
 
 
-def is_synced(est: float, true: float, tol: float = 2.0) -> float:
-    return float(align_error(est, true) <= tol)
+def signed_error360(est: float, true: float) -> float:
+    return wrap360(float(est) - float(true))
+
+
+def is_synced(est: float, true: float, tol: float = 2.0,
+              period: float = 180.0) -> float:
+    """1.0 when the estimate is within ``tol`` degrees, in the given period."""
+    return float(align_error(est, true, period=period) <= tol)
+
+
+def is_synced360(est: float, true: float, tol: float = 2.0) -> float:
+    """1.0 when the estimate is within ``tol`` degrees on the *full* circle."""
+    return float(align_error360(est, true) <= tol)
 
 
 def case_rotation_angle(case: str, theta: float) -> float:
@@ -154,6 +185,60 @@ def paired_bootstrap_ci(a: Sequence[float], b: Sequence[float],
     vals = np.array([float(d[rng.randint(0, n, n)].mean()) for _ in range(n_boot)])
     lo, hi = np.percentile(vals, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     return {"mean": float(d.mean()), "ci": [float(lo), float(hi)], "n": int(n)}
+
+
+def _cluster_groups(groups: Sequence) -> List[np.ndarray]:
+    """Map a per-record cluster id to the record indices of each cluster."""
+    buckets: Dict[str, List[int]] = {}
+    for idx, g in enumerate(groups):
+        buckets.setdefault(str(g), []).append(idx)
+    return [np.asarray(v, dtype=np.int64) for v in buckets.values()]
+
+
+def clustered_stat_ci(values: Sequence[float], groups: Sequence,
+                      stat=np.mean, n_boot: int = 2000, seed: int = 0,
+                      alpha: float = 0.05) -> Dict:
+    """Cluster (image-level) bootstrap for any scalar statistic.
+
+    ``bootstrap_ci`` resamples *records*.  When records are repeated
+    measurements of the same image -- the rotation suites store 8-27 records per
+    image, and the same 30 images are reused across sub-runs -- that treats them
+    as independent draws and reports intervals that are far too narrow.  Here the
+    resampling unit is the cluster (normally ``image_id``): a cluster drawn into
+    a bootstrap replicate contributes *all* of its records.
+    """
+    arr = np.asarray(list(values), dtype=np.float64)
+    if arr.size == 0:
+        return None
+    clusters = _cluster_groups(groups)
+    rng = np.random.RandomState(seed)
+    n_c = len(clusters)
+    vals = np.empty(n_boot, dtype=np.float64)
+    for b in range(n_boot):
+        pick = rng.randint(0, n_c, n_c)
+        idx = np.concatenate([clusters[j] for j in pick])
+        vals[b] = float(stat(arr[idx]))
+    lo, hi = np.percentile(vals, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return {"mean": float(stat(arr)), "ci": [float(lo), float(hi)],
+            "n": int(arr.size), "n_clusters": int(n_c)}
+
+
+def clustered_rate_ci(flags: Sequence[float], groups: Sequence,
+                      n_boot: int = 2000, seed: int = 0,
+                      alpha: float = 0.05) -> Dict:
+    """Cluster bootstrap for a 0/1 rate (e.g. the sync-failure rate).
+
+    Same rationale as :func:`clustered_stat_ci`: resampling records for a rate
+    that is only replicated across ~30 images understates the uncertainty by
+    roughly the square root of the records-per-image ratio.
+    """
+    arr = (np.asarray(list(flags), dtype=np.float64) > 0.5).astype(np.float64)
+    if arr.size == 0:
+        return None
+    res = clustered_stat_ci(arr, groups, stat=np.mean, n_boot=n_boot,
+                            seed=seed, alpha=alpha)
+    res["k"] = int(arr.sum())
+    return res
 
 
 def calibrate_threshold(neg: Sequence[float], fpr: float, eps: float = 1e-12):
@@ -277,12 +362,25 @@ class ResumeLog:
     Each row must carry a ``uid`` (or ``image_id``/``case``/``method``).  On
     restart the existing file is scanned and finished uids are skipped, so a
     long GPU job can be interrupted without losing work.
+
+    Pass ``fingerprint=run_meta`` to get a guard against the failure mode this
+    feature introduces: a *smoke* run and a *full* run pointed at the same
+    ``--out_dir`` share uids, so the resume logic silently keeps the smoke rows
+    (with the smoke configuration) and skips those uids in the later run.  The
+    guard stores a hash of the stable part of the config next to the rows and
+    refuses to resume when it differs.
     """
 
-    def __init__(self, path: str, keys: Sequence[str] = ("uid",)):
+    #: keys whose values legitimately change between runs of the same config
+    VOLATILE_KEYS = ("provenance", "created", "timestamp", "elapsed_sec",
+                     "runtime_sec")
+
+    def __init__(self, path: str, keys: Sequence[str] = ("uid",),
+                 fingerprint: Optional[Dict] = None):
         self.path = path
         self.keys = tuple(keys)
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        self._guard_fingerprint(path, fingerprint)
         self.done = set()
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
@@ -296,6 +394,52 @@ class ResumeLog:
                         continue
                     self.done.add(tuple(str(rec.get(k)) for k in self.keys))
         self._fh = open(path, "a", encoding="utf-8")
+
+    @classmethod
+    def _stable(cls, obj):
+        """Drop volatile keys so a restart of the same config hashes identically."""
+        if isinstance(obj, dict):
+            return {k: cls._stable(v) for k, v in obj.items()
+                    if k not in cls.VOLATILE_KEYS}
+        if isinstance(obj, (list, tuple)):
+            return [cls._stable(v) for v in obj]
+        return obj
+
+    @classmethod
+    def _guard_fingerprint(cls, path: str, fingerprint: Optional[Dict]) -> None:
+        """Fail loudly when resuming a run with a different configuration."""
+        if fingerprint is None:
+            return
+        side = path + ".fingerprint.json"
+        cur = config_hash(cls._stable(fingerprint))
+        has_rows = os.path.exists(path) and os.path.getsize(path) > 0
+        prev = None
+        if os.path.exists(side):
+            try:
+                with open(side, encoding="utf-8") as f:
+                    prev = json.load(f).get("fingerprint")
+            except Exception:
+                prev = None
+        if prev is None and has_rows:
+            safe_print(
+                f"[ResumeLog] WARNING: {path} already contains rows but has no "
+                f"fingerprint sidecar, so the configuration cannot be verified. "
+                f"Use a fresh --out_dir if the existing rows may come from "
+                f"different parameters.")
+        elif prev is not None and prev != cur:
+            raise SystemExit(
+                "[ResumeLog] refusing to resume:\n"
+                f"  rows        : {path}\n"
+                f"  written with: fingerprint {prev}\n"
+                f"  current run : fingerprint {cur}\n"
+                "This guards against mixing a smoke run and a full run in one "
+                "--out_dir (the uids collide and the older rows are kept). "
+                "Use a different --out_dir, or delete the rows file to redo it.")
+        try:
+            write_json(side, {"fingerprint": cur,
+                              "config": to_jsonable(cls._stable(fingerprint))})
+        except Exception as exc:  # pragma: no cover - never block a run on this
+            safe_print(f"[ResumeLog] WARNING: could not write {side} ({exc})")
 
     def has(self, row: Dict) -> bool:
         return tuple(str(row.get(k)) for k in self.keys) in self.done

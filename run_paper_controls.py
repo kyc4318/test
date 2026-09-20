@@ -171,7 +171,7 @@ def main() -> None:
     done_path = os.path.join(out_dir, "done.json")
     t0 = time.time()
 
-    with ResumeLog(rows_path, keys=("uid",)) as log:
+    with ResumeLog(rows_path, keys=("uid",), fingerprint=run_meta) as log:
         for i in tqdm(indices.tolist(), desc="p0-controls"):
             seed = i + cfg.gen_seed
             prompt = dataset[i][prompt_key]
@@ -452,12 +452,17 @@ def report(out_dir, run_meta, summary) -> None:
              f"搜索网格 {run_meta['grid_step']}°（{run_meta['grid_n']} 个候选）；"
              f"校准/测试各 {run_meta['split']['calib_n']} 张，索引互不相交。", ""]
     if run_meta["crop_black"]:
-        lines.append("> 本表使用**裁剪黑边**的旋转算子（去零填充），用于检验"
-                     "同步是否在读插值痕迹而不是载波。")
+        lines.append("> 本表使用 `--crop_black` 算子：旋转 -> 取内接正方形 -> "
+                     "**resize 回原尺寸**。注意它同时改变尺度（45° 时约 1.41x），"
+                     "因此**不能**当作「去黑边」对照来解读；"
+                     "尺度不变量下的去填充对照见 `run_unseen_operators.py` 的 "
+                     "`cv2_*_reflect`（反射填充，无黑边、几何与插值可对齐）。")
         lines.append("")
-    lines += ["| 攻击 | null 分数(均值) | 搜索增益 | AUC | TPR@1%FPR(校准阈值) "
-              "| 实测 FPR | 同一阈值下无搜索 TPR | null 角度泄漏率 | ours 失锁率 |",
-              "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    lines += ["| 攻击 | null 分数(均值) | 搜索增益 | AUC | "
+              "**搜索检测器** TPR@1%FPR | 实测 FPR | "
+              "**无搜索检测器** TPR@1%FPR（独立标定） | 其实测 FPR | "
+              "null 角度泄漏率 | ours 失锁率 |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for case, e in summary.items():
         c = e["calibrated"].get("0.01", {})
         leak = e["null_angle_leak"].get("test", {})
@@ -466,17 +471,22 @@ def report(out_dir, run_meta, summary) -> None:
             f"{fmt(e['search_gain_null'], 3)} | {fmt(e['auc_test'], 3)} | "
             f"{fmt(c.get('tpr_test'), 3)} | {fmt(c.get('fpr_test_realised'), 3)} | "
             f"{fmt(c.get('tpr_test_no_search'), 3)} | "
+            f"{fmt(c.get('fpr_test_no_search'), 3)} | "
             f"{fmt(leak.get('sync_rate_null'), 3)} | "
             f"{fmt(e['wm_sync'].get('sync_fail_rate'), 3)} |")
     lines += ["", "说明：", "",
               "- **搜索增益** = 校准集上 null 的 `max_γ S(γ)` 均值 / `S(0)` 均值。"
               "接近 1 说明最大搜索没有抬高噪声底；显著大于 1 说明必须在解码端"
               "做多重比较校正。",
-              "- **TPR@1%FPR** 的阈值来自校准集 null 分数的顺序统计量，"
-              "测试集从未参与阈值选择，因此该列可作为独立检验。",
+              "- **两个检测器各自标定阈值**：`tau_max_over_angles` 用校准集的"
+              "`max_γ S(γ)`，`tau_no_search` 用校准集的 `S(0)`。两列因此是"
+              "「相同名义 FPR 下的两个检测器」，而不是共用一个阈值；"
+              "两者的**实测** FPR 都列出，因为它们可能不同（校准集只有 50 张）。",
+              "- 测试集从未参与阈值选择，因此两列都可作为独立检验。",
               "- **null 角度泄漏率** 只在旋转类攻击上有意义："
               "无水印图同样被旋转，若其估计角仍与真实旋转角吻合，"
-              "说明角度信息来自插值/黑边，而非载波。",
+              "说明角度信息来自插值/黑边，而非载波。这是**不依赖任何填充算子"
+              "几何假设**的泄漏检验（它只要求攻击算子本身一致）。",
               ""]
     path = os.path.join(out_dir, "summary.md")
     os.makedirs(out_dir, exist_ok=True)

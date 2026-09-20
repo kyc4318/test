@@ -24,6 +24,25 @@ The `clean` condition is kept as the inversion-error floor, so every other row
 can be read as an increment over it: attenuation (parallel) versus leakage into
 the orthogonal complement (perpendicular).
 
+Caveats on the two derived scalars (both are easy to over-read):
+
+* ``attenuation_db`` is ``10*log10(mean|Z_aligned|^2 / mean|Z_w|^2)`` -- a ratio
+  of **total observed annulus power**, not of watermark-signal power.  A large
+  attack residual can keep this number high while the watermark itself is
+  attenuated, so it does NOT measure signal strength.  Read it together with the
+  residual ``E`` and the matching-filter output.
+* ``snr_carrier`` uses the *observed* ``ell_j`` in the numerator and the residual
+  after subtracting the fitted carrier in the denominator.  It is a
+  coefficient-to-fit-residual power ratio, not a physical signal-to-noise ratio:
+  a bit whose sign is wrong still contributes a positive ``(b_j ell_j)^2``, and
+  carrier-aligned attack error inflates the numerator.  That is why rot+noise can
+  show a *higher* ``snr_carrier`` than pure rotation while having a *worse*
+  relative margin ``delta_rel``.  ``delta_rel`` (a per-image mean) is the
+  quantity that tracks which angle actually wins the argmax; ``S_false`` is
+  computed with the same mod-180 ``align_error`` as everything else, so it only
+  excludes competitors that are 180-degrees-equivalent, and should be re-derived
+  on the full circle once rows recorded with ``align_error360`` are available.
+
     python run_inversion_error_spectrum.py --N 25 \
         --cases clean,rot45,rot75,noise0.05,rot+noise0.05
 """
@@ -181,7 +200,7 @@ def main() -> None:
     ctx = AttackCtx(device=device)
     t0 = time.time()
 
-    with ResumeLog(rows_path, keys=("uid",)) as log:
+    with ResumeLog(rows_path, keys=("uid",), fingerprint=run_meta) as log:
         for i in tqdm(range(args.start, args.start + args.N), desc="spectrum"):
             seed = i + cfg.gen_seed
             prompt = dataset[i][prompt_key]

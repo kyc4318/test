@@ -47,3 +47,27 @@ Everything here is **pilot scale** (`N=50` per cell unless the report says
 otherwise, and the operator-generalisability stage used `N=15`). Use the
 confidence intervals, not the point estimates, and read the
 "Known caveats" section of the top-level README before quoting any number.
+
+## Corrections applied on 2026-09-21
+
+An external source-code review prompted a set of corrections to how the numbers
+here are defined. Each affected report carries a `⚠️ 更正 (2026-09-21)` block at
+the top; the consolidated list is in
+[`P0_SESSION_SUMMARY.md`](P0_SESSION_SUMMARY.md) §0.1 and the claim-by-claim
+response is in its §10. In short:
+
+* **Retracted**: the `pil_expand_crop` cell as evidence that synchronization does
+  not read the zero-filled wedges — that operator is pixel-identical to a plain
+  rotate, so it never removed them.
+* **Metric change**: synchronization is scored mod-360 rather than mod-180
+  (`align_error360` / `is_synced360`); the numbers printed in these reports are
+  still mod-180 and need an offline recomputation from `rows.jsonl`.
+* **Interval change**: rotation/operator aggregates need image-level clustered
+  intervals (`clustered_stat_ci` / `clustered_rate_ci`), not record-level Wilson.
+* **Wording**: `snr_carrier` is a coefficient/fit-residual power ratio (not a
+  physical SNR), `attenuation_db` is a **total** annulus power ratio (not signal
+  strength), and the identity decision statistic is a payload-matching margin
+  (not `S(gamma)`), with `Id-Acc != PMR` in general.
+* **Formula alignment**: product fusion is un-normalised at runtime
+  (`prod_l S_l`) while the design searches normalise by `S_l(0)`; the annulus has
+  **940** write points, not 952.

@@ -12,10 +12,18 @@ Attack operators (applied to the 512x512 image):
     ``pil_bilinear``       PIL, bilinear, zero fill -- the operator used so far
     ``pil_bicubic``        PIL, bicubic
     ``pil_nearest``        PIL, nearest neighbour
-    ``pil_expand_crop``    PIL bilinear, ``expand=True`` then centre-crop back:
-                           no zero-filled wedges, plus one extra resampling
-    ``cv2_linear_reflect`` OpenCV ``warpAffine``, linear, reflect border
-    ``cv2_cubic_constant`` OpenCV ``warpAffine``, cubic, constant(0) border
+    ``pil_expand_crop``    PIL bilinear, ``expand=True`` then centre-crop back.
+                           NOTE: this is **pixel-identical to ``pil_bilinear``**
+                           for a square image (the centred crop recovers the same
+                           window, black wedges included), so it is *not* a
+                           padding control -- kept only as another rotation
+                           realisation.  See ``PADDING_PAIRS`` for the real test.
+    ``cv2_*_constant``     OpenCV ``warpAffine`` with a constant(0) border
+    ``cv2_*_reflect``      OpenCV ``warpAffine`` with a reflect border:
+                           same library, interpolation, matrix and output size as
+                           the ``*_constant`` twin, but **no black wedges**.  The
+                           constant/reflect pair is the clean test of "is the
+                           synchronizer reading the zero-filled corners?".
 
 Decoder operators (applied to the recovered 64x64 latent at ``-angle``):
     ``tv_nearest_c31.5``   torchvision nearest about 31.5 -- **this is the
@@ -72,14 +80,34 @@ from PIL import Image
 from tqdm import tqdm
 
 from p0_common import (OursCore, ResumeLog, add_gaussian_noise, align_error,
-                       bit_acc, bits_from_rng, bootstrap_ci, is_synced,
-                       load_rows, make_config, perfect_match, provenance,
-                       resolve_device, safe_print, search_grid, signed_error,
-                       wilson, write_json)
+                       align_error360, bit_acc, bits_from_rng, bootstrap_ci,
+                       clustered_rate_ci, clustered_stat_ci, is_synced,
+                       is_synced360, load_rows, make_config, perfect_match,
+                       provenance, resolve_device, safe_print, search_grid,
+                       signed_error, signed_error360, wilson, write_json)
 
 ATTACK_OPS = ("pil_bilinear", "pil_bicubic", "pil_nearest", "pil_expand_crop",
-              "cv2_linear_reflect", "cv2_cubic_constant", "cv2_cubic_reflect")
+              "cv2_linear_constant", "cv2_linear_reflect",
+              "cv2_cubic_constant", "cv2_cubic_reflect",
+              "cv2_nearest_constant", "cv2_nearest_reflect")
 CV2_OPS = tuple(o for o in ATTACK_OPS if o.startswith("cv2_"))
+
+#: Matched padding pairs: identical library, interpolation and rotation matrix,
+#: so the *only* difference is the border rule.  Comparing the two cells of a
+#: pair is the clean test of "does the synchronizer read the black wedges?".
+PADDING_PAIRS = (("cv2_linear_constant", "cv2_linear_reflect"),
+                 ("cv2_nearest_constant", "cv2_nearest_reflect"),
+                 ("cv2_cubic_constant", "cv2_cubic_reflect"))
+
+#: ``pil_expand_crop`` (rotate with ``expand=True`` then centre-crop back) was
+#: meant as a padding-free control, but for a square image it is **pixel-identical
+#: to a plain rotate**: the expanded canvas is centred on the same pivot and the
+#: centred ``w x h`` crop recovers exactly the same window, so the black corners
+#: remain.  Verified independently on 512x512 white *and* random images: 0
+#: differing pixels at 30/37.3/75 degrees (1 pixel at 45 degrees, rounding).
+#: It is kept as an operator (it is a valid rotation) but it must NOT be quoted
+#: as evidence about padding -- use ``PADDING_PAIRS`` instead.
+PIL_EXPAND_CROP_IS_NOT_A_PADDING_CONTROL = True
 # torchvision only supports nearest/bilinear for tensor input, so the bicubic
 # decoder variants go through grid_sample instead (see ``_grid_rotate``).
 # ``tv_nearest_c31.5`` is the canonical one: TF.rotate defaults to NEAREST.
@@ -96,9 +124,12 @@ def _cv2_flags(op: str):
     import cv2
 
     return {
+        "cv2_linear_constant": (cv2.INTER_LINEAR, cv2.BORDER_CONSTANT),
         "cv2_linear_reflect": (cv2.INTER_LINEAR, cv2.BORDER_REFLECT_101),
         "cv2_cubic_constant": (cv2.INTER_CUBIC, cv2.BORDER_CONSTANT),
         "cv2_cubic_reflect": (cv2.INTER_CUBIC, cv2.BORDER_REFLECT_101),
+        "cv2_nearest_constant": (cv2.INTER_NEAREST, cv2.BORDER_CONSTANT),
+        "cv2_nearest_reflect": (cv2.INTER_NEAREST, cv2.BORDER_REFLECT_101),
     }[op]
 
 
@@ -439,7 +470,7 @@ def main() -> None:
     rows_path = os.path.join(out_dir, "rows.jsonl")
     t0 = time.time()
     rng_w = np.random.RandomState(cfg.w_seed)
-    with ResumeLog(rows_path, keys=("uid",)) as log:
+    with ResumeLog(rows_path, keys=("uid",), fingerprint=run_meta) as log:
         for i in tqdm(range(args.start, args.start + args.N),
                       desc="unseen-ops"):
             seed = i + cfg.gen_seed
@@ -498,6 +529,10 @@ def main() -> None:
                                 "est_error_deg": align_error(est, angle),
                                 "signed_error_deg": signed_error(est, angle),
                                 "synced": is_synced(est, angle, args.sync_tol),
+                                "est_error_deg360": align_error360(est, angle),
+                                "signed_error_deg360": signed_error360(est, angle),
+                                "synced360": is_synced360(est, angle,
+                                                          args.sync_tol),
                                 "detection_score": float(S[best]),
                                 "S_true": float(s_true),
                                 "S_false": s_false,
@@ -544,23 +579,37 @@ def _agg(rows):
     n = len(rows)
     if n == 0:
         return None
+    groups = [r["image_id"] for r in rows]
     errs = np.asarray([r["est_error_deg"] for r in rows], dtype=np.float64)
     fails = int(sum(1 for r in rows if not r["synced"]))
     p, lo, hi = wilson(fails, n)
+    fails360 = int(sum(1 for r in rows if not r["synced360"]))
+    p3, lo3, hi3 = wilson(fails360, n)
     bit = np.asarray([r["bit_acc"] for r in rows], dtype=np.float64)
     bit_or = np.asarray([r["bit_acc_oracle"] for r in rows], dtype=np.float64)
     pmr_k = int(sum(1 for r in rows if r["perfect"]))
     pmr, plo, phi = wilson(pmr_k, n)
     return {
         "n": n,
+        "n_images": len({str(g) for g in groups}),
+        # record-level (too narrow when several angles share an image -- here
+        # every cell has n_angles records per image, so read the clustered one)
         "sync_fail_rate": {"mean": p, "ci": [lo, hi], "k": fails},
+        "sync_fail_rate_clustered": clustered_rate_ci(
+            [0.0 if r["synced"] else 1.0 for r in rows], groups),
+        "sync_fail_rate360": {"mean": p3, "ci": [lo3, hi3], "k": fails360},
+        "sync_fail_rate360_clustered": clustered_rate_ci(
+            [0.0 if r["synced360"] else 1.0 for r in rows], groups),
         "align_err_mean": float(errs.mean()),
         "align_err_median": float(np.median(errs)),
         "align_err_p90": float(np.percentile(errs, 90)),
         "bit_acc_mean": float(bit.mean()),
         "bit_acc": bootstrap_ci(bit),
+        "bit_acc_clustered": clustered_stat_ci(bit, groups),
         "bit_acc_oracle_mean": float(bit_or.mean()),
         "pmr": {"mean": pmr, "ci": [plo, phi], "k": pmr_k},
+        "pmr_clustered": clustered_rate_ci(
+            [1.0 if r["perfect"] else 0.0 for r in rows], groups),
         "delta_rel_mean": float(np.nanmean([r["delta_rel"] for r in rows])),
     }
 
@@ -669,6 +718,37 @@ def report(out_dir, run_meta, summary) -> None:
             lines += ["", f"参考格 BitAcc={ref['bit_acc_mean']:.4f}；"
                       f"最差攻击算子 `{worst[0]}` 落差 {worst[1]:+.4f}。"]
 
+    # ---- clean padding control -------------------------------------------
+    # Same library, same interpolation, same rotation matrix, same output size;
+    # the *only* difference is the border rule.  This is the test that
+    # ``pil_expand_crop`` cannot provide (it is pixel-identical to a plain
+    # rotate, so it never removes the black wedges at all).
+    pad_rows = []
+    for a_const, a_ref in PADDING_PAIRS:
+        for dop in decode_ops:
+            c1 = cells.get(f"{a_const}|{dop}")
+            c2 = cells.get(f"{a_ref}|{dop}")
+            if c1 is None or c2 is None:
+                continue
+            pad_rows.append((a_const, a_ref, dop,
+                             c2["bit_acc_mean"] - c1["bit_acc_mean"],
+                             c2["sync_fail_rate"]["mean"]
+                             - c1["sync_fail_rate"]["mean"]))
+    if pad_rows:
+        lines += ["", "## 真正的填充对照（同库/同插值/同旋转矩阵，只换边界规则）", "",
+                  "常值填充留下零填充黑楔（攻击端会读到的“角度提示”最有可能的来源）；"
+                  "反射填充**没有黑边**，图像内容与几何完全不变。"
+                  "若同步真的在读黑楔，反射填充应当明显变差。", "",
+                  "| 常值(黑边) | 反射(无黑边) | 解码算子 | ΔBitAcc（反射−常值） | Δ失锁率 |",
+                  "|---|---|---|---:|---:|"]
+        for a_const, a_ref, dop, d_bit, d_fail in pad_rows:
+            lines.append(f"| `{a_const}` | `{a_ref}` | `{dop}` | "
+                         f"{d_bit:+.4f} | {d_fail:+.3f} |")
+        worst_pad = max(pad_rows, key=lambda t: abs(t[4]))
+        lines += ["", f"填充改变造成的最大失锁率变化："
+                  f"{worst_pad[4]:+.3f}（`{worst_pad[0]}` vs `{worst_pad[1]}`，"
+                  f"解码 `{worst_pad[2]}`）。"]
+
     lines += ["", "## 预注册解读规则（跑之前就定好）", "",
               "1. 若各攻击算子在**同一解码算子**下都落在参考格的 Wilson 区间内"
               "→ 旋转鲁棒性是载波/反演通道的性质，不是某个 `rotate()` 实现的性质；",
@@ -677,8 +757,18 @@ def report(out_dir, run_meta, summary) -> None:
               "3. 若 cv2 / expand-crop 攻击格在 canonical 解码下明显变差"
               "→ 设计搜索对某一种插值几何过拟合，必须作为 limitation 如实写出。",
               "",
-              "角误差按 mod 180° 定义（Hermitian 对径对称）；`oracle BitAcc` 是在"
-              "真实角度上解码得到的，用于区分同步失败与载荷失败。", ""]
+              "**关于 `pil_expand_crop`**：它曾被当作「去黑边」对照，但实测与普通"
+              "旋转**逐像素相同**（512x512 白图与随机图，30/37.3/75° 差异 0 像素，"
+              "45° 差 1 像素）——`expand=True` 的中心裁剪只是取回了同一个窗口，"
+              "黑楔依然存在。因此**不能**用它支持「同步不读黑边」；"
+              "请用上面的常值/反射配对。脚本内 "
+              "`PIL_EXPAND_CROP_IS_NOT_A_PADDING_CONTROL` 记录了这一点。",
+              "",
+              "**角度指标**：`mod180`（默认，实值载波假设）与 `mod360`（全圆）"
+              "同时记录；复相位掩码打破了 180° 等价性，判定同步应看 `mod360`。"
+              "**区间**：`逐行` 列与`按图像聚类` 列都给；"
+              "每格只有 15 张图、却有 4 个角度，必须看聚类列。"
+              "`oracle BitAcc` 用于区分同步失败与载荷失败。", ""]
 
     path = os.path.join(out_dir, "summary.md")
     os.makedirs(out_dir, exist_ok=True)

@@ -168,7 +168,7 @@ def main() -> None:
     ctx = AttackCtx(device=device)
     t0 = time.time()
 
-    with ResumeLog(rows_path, keys=("uid",)) as log:
+    with ResumeLog(rows_path, keys=("uid",), fingerprint=run_meta) as log:
         for i in tqdm(range(args.start, args.start + args.N), desc="pareto"):
             seed = i + cfg.gen_seed
             prompt = dataset[i][prompt_key]

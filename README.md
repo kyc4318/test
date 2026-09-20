@@ -78,11 +78,16 @@ Other verified claims (all with Wilson / bootstrap intervals in `reports/`):
 
 * **1230 pure-rotation samples** (integer, off-grid, random and negative angles):
   5 sync failures (**0.41%**).
-* **Unseen rotation operators** (PIL bicubic, OpenCV linear+reflect, OpenCV
-  cubic+constant, PIL expand+crop) keep `BitAcc` 0.994-0.996 under the canonical
-  decoder. `pil_expand_crop` — which removes the zero-filled wedges *without*
-  changing scale — matches the reference cell exactly, so the synchronizer is not
-  reading padding.
+* **Unseen rotation operators** keep `BitAcc` 0.994-0.996 under the canonical
+  decoder (PIL bicubic, OpenCV linear+reflect, OpenCV cubic+constant).
+  The padding question is **not** settled by the `pil_expand_crop` cell that an
+  earlier revision of the report cited: that operator turns out to be
+  pixel-identical to a plain rotate, so it was never a padding control. A matched
+  `cv2_*_constant` vs `cv2_*_reflect` comparison (same geometry/interpolation,
+  border rule only) has been added and still needs a GPU run. The
+  padding-independent evidence that does hold is the **null angle-leak rate of
+  0.02-0.04** on the rotated cells: unwatermarked images are rotated by the same
+  operator, and their estimated angle does not track the true one.
 * **Equal-quality comparison**: at the same PSNR/SSIM/LPIPS/CLIP, the 8-bit design
   beats the 16-bit design by **+0.30 to +0.58 PMR** under rotation.
 
@@ -248,7 +253,7 @@ in `swm/metr_baseline.py`; the METR runner is `run_metr_baseline.py`.
 |---|---|---|
 | `run_paper_controls.py` | "Is your AUC just a max over angles?" / "does a wrong key pass?" / "is the angle leaking from the padding?" | presence: **passes** (TPR@1%FPR 1.000 on 7/8 cells); wrong-key: **fails** by design — see caveats |
 | `run_continuous_rotation.py` | "Do intermediate / negative / off-grid angles break it?" | **passes** (0.41% failure over 1230 pure-rotation samples) |
-| `run_unseen_operators.py` | "Did you optimize for one particular `rotate()` implementation?" | **passes** (4 unseen attack operators, 3 unseen decoder kernels) |
+| `run_unseen_operators.py` | "Did you optimize for one particular `rotate()` implementation?" | **passes** for operator generalisation (3 distinct unseen attack operators + 3 unseen decoder kernels); the *padding* sub-question is **open** pending the added `cv2_*_constant`/`cv2_*_reflect` pair |
 | `run_inversion_error_spectrum.py` | "Why does rotation+noise still fail?" | rotation barely attenuates the annulus (-3.71 dB, against a -2.12 dB clean-inversion floor) but grows the residual 6x, and **62-70% of that residual lands inside the carrier subspace** |
 | `run_identity_benchmark.py` | "Can it enter a key-identification table?" | closed-set `Id-Acc@1 = 1.000`; but rejecting **unregistered** keys at a presence threshold fails (FPR 0.30-0.70) |
 | `run_capacity_quality_pareto.py` | "Is the robustness just a bigger energy knob?" | energy is a real knob **with a steep quality price**; at equal quality the 8-bit design wins by 0.30-0.58 PMR |
@@ -289,10 +294,17 @@ Read these before quoting anything:
    run into the *same* `--out_dir` silently keeps the smoke rows (with the smoke
    configuration) and skips those uids later. Always use separate output
    directories per configuration.
-7. **`--crop_black` is not a padding-leak control.** `inscribed_crop_after_rotation`
-   rotates, crops to the inscribed square and **resizes back to 512**, i.e. it is
-   rotation *plus* a ~1.41x zoom at 45 degrees. Use `pil_expand_crop` (in
-   `run_unseen_operators.py`) for a scale-preserving, padding-free control.
+7. **Neither `--crop_black` nor `pil_expand_crop` is a padding-leak control.**
+   `inscribed_crop_after_rotation` rotates, crops to the inscribed square and
+   **resizes back to 512** — that is rotation *plus* a ~1.41x zoom at 45 degrees,
+   and scaling is a known boundary of an angular method. `pil_expand_crop`
+   (rotate with `expand=True`, then centre-crop back) is **pixel-identical to a
+   plain rotate** on a square image: the centred crop recovers the same window,
+   black wedges included. Verified on 512x512 white *and* random images: 0
+   differing pixels at 30/37.3/75 degrees, 1 pixel at 45 degrees. Use the matched
+   `cv2_*_constant` vs `cv2_*_reflect` pairs in `run_unseen_operators.py`
+   (`PADDING_PAIRS`) instead — same library, interpolation, matrix and output
+   size, only the border rule changes.
 8. **Scale / crop are out of scope.** The synchronizer is angular; scaling is a
    radial transform. That is a stated boundary, not an implementation bug.
 9. **Quality numbers are paired, not literature FID.** `reports/paper_pareto.md`
@@ -301,6 +313,43 @@ Read these before quoting anything:
    "FID vs MS-COCO real images" numbers from the literature.
 10. **`run_p0_queue.sh` writes its `*_done.txt` marker even when a stage exits
     non-zero.** Check the `(rc=...)` in the log, not the marker.
+11. **The synchronization metrics default to mod-180, which this carrier does
+    not satisfy.** `p0_common.align_error` assumes a 180-degree flip is an
+    equivalent alignment — true only for a *real* Hermitian carrier, which is
+    exactly what the complex phase mask breaks. A hypothesis at `true + 180` is
+    therefore a genuine failure, yet mod-180 scores it 0 error. Use
+    `align_error360` / `is_synced360` (added in this revision);
+    `run_continuous_rotation.py` and `run_unseen_operators.py` now record both.
+    The numbers currently printed in `reports/` are mod-180 and were produced
+    before the two metrics existed.
+12. **Record-level confidence intervals are too narrow for the rotation
+    suites.** The 720-record rotation stack is 30 images x 24 angles, and the
+    three sub-runs reuse the same 30 images. `bootstrap_ci` / `wilson` resample
+    *records*; use `clustered_stat_ci` / `clustered_rate_ci`
+    (image-level block bootstrap, also added in this revision). On synthetic data
+    shaped like the real runs the clustered interval is ~3x wider. So treat
+    "1230 pure-rotation samples, 0.41% failure" as "1230 (image, angle) records
+    from 30 images", not as 1230 independent draws.
+13. **Product fusion is not normalised at runtime.** The manuscript formula is
+    `prod_l S_l(gamma)/S_l(0)`, but `swm/dual_layer.py::score` and
+    `OursCore.score_at` compute `prod_l S_l(gamma)`. The design searches
+    (`search_design*.py`) *do* normalise by `S_l(0)`. The argmax angle is
+    unaffected, but detection statistics, AUC and thresholds are — so results
+    computed with the raw product must not be described as the normalised
+    formula. In the reproduction command in the repo's reports this is the reason
+    some analysis uses raw `S(gamma)`.
+14. **The annulus has 940 write points, not 952.** `swm/dual_layer.py` uses the
+    half-open band `r_lo <= r < r_hi`, so points falling exactly on radius 20 are
+    excluded (inner 472 + outer 468 = 940; see `annulus_points` in
+    `runs/p0_spectrum/run_config.json`). Use 940 in the energy definition.
+15. **Rejecting wrong/unregistered keys needs its own negatives.** The
+    presence statistic `S(gamma)` is not a key-attribution statistic, and the
+    identity benchmark's decision statistic is a *payload-matching margin*
+    (`q_best - q_second`), not `S(gamma)`. Both need their thresholds calibrated
+    on the harder negative class (wrong key / unregistered payload) rather than
+    on unwatermarked images. Also note closed-set `Id-Acc` and `PMR` are **not**
+    equivalent: a single bit error sets `PMR = 0` while `Id-Acc` can still be 1
+    when the flipped-bit neighbour is not registered.
 
 ## Third-party provenance
 

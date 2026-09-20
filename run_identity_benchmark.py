@@ -308,7 +308,7 @@ def main() -> None:
 
     rows_path = os.path.join(args.out_dir, "rows.jsonl")
     t0 = time.time()
-    with ResumeLog(rows_path, keys=("uid",)) as log:
+    with ResumeLog(rows_path, keys=("uid",), fingerprint=run_meta) as log:
         for name in [m for m in args.methods.split(",") if m]:
             n_bits = payload_bits_of(name, args, device)
             registry, unregistered, space = make_registry(

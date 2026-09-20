@@ -30,10 +30,11 @@ import numpy as np
 from tqdm import tqdm
 
 from p0_common import (OursCore, ResumeLog, add_gaussian_noise, align_error,
-                       bit_acc, bits_from_rng, bootstrap_ci, is_synced,
-                       make_config, perfect_match, provenance, resolve_device,
-                       rotate_image, safe_print, search_grid, signed_error,
-                       wilson, write_json)
+                       align_error360, bit_acc, bits_from_rng, bootstrap_ci,
+                       clustered_rate_ci, clustered_stat_ci, is_synced,
+                       is_synced360, make_config, perfect_match, provenance,
+                       resolve_device, rotate_image, safe_print, search_grid,
+                       signed_error, signed_error360, wilson, write_json)
 
 
 def parse_args():
@@ -126,7 +127,7 @@ def main() -> None:
     rows_path = os.path.join(out_dir, "rows.jsonl")
     t0 = time.time()
     rng_w = np.random.RandomState(cfg.w_seed)
-    with ResumeLog(rows_path, keys=("uid",)) as log:
+    with ResumeLog(rows_path, keys=("uid",), fingerprint=run_meta) as log:
         for i in tqdm(range(args.start, args.start + args.N), desc="rotation"):
             seed = i + cfg.gen_seed
             prompt = dataset[i][prompt_key]
@@ -183,6 +184,12 @@ def main() -> None:
                         "est_error_deg": align_error(est, alpha),
                         "signed_error_deg": signed_error(est, alpha),
                         "synced": is_synced(est, alpha, args.sync_tol),
+                        # Full-circle variant.  The complex phase mask breaks the
+                        # 180-degree equivalence, so an estimate at ``alpha+180``
+                        # is a genuine failure even though mod-180 scores it 0.
+                        "est_error_deg360": align_error360(est, alpha),
+                        "signed_error_deg360": signed_error360(est, alpha),
+                        "synced360": is_synced360(est, alpha, args.sync_tol),
                         "detection_score": float(S[best]),
                         "S_true": float(s_true),
                         "S_false": s_false,
@@ -233,25 +240,46 @@ def _agg(rows):
     n = len(rows)
     if n == 0:
         return None
+    groups = [r["image_id"] for r in rows]
     errs = np.asarray([r["est_error_deg"] for r in rows], dtype=np.float64)
+    errs360 = np.asarray([r["est_error_deg360"] for r in rows],
+                         dtype=np.float64)
     fails = int(sum(1 for r in rows if not r["synced"]))
+    fails360 = int(sum(1 for r in rows if not r["synced360"]))
     p, lo, hi = wilson(fails, n)
+    p3, lo3, hi3 = wilson(fails360, n)
     bit = np.asarray([r["bit_acc"] for r in rows], dtype=np.float64)
     bit_or = np.asarray([r["bit_acc_oracle"] for r in rows], dtype=np.float64)
     pmr_k = int(sum(1 for r in rows if r["perfect"]))
     pmr, plo, phi = wilson(pmr_k, n)
     return {
         "n": n,
+        "n_images": len({str(g) for g in groups}),
+        # record-level intervals: treat each (image, angle) pair as independent.
+        # Reported for continuity, but they are too narrow whenever failures
+        # cluster inside images -- which they do here (see the clustered ones).
         "sync_fail_rate": {"mean": p, "ci": [lo, hi], "k": fails},
+        "sync_fail_rate_clustered": clustered_rate_ci(
+            [0.0 if r["synced"] else 1.0 for r in rows], groups),
+        "sync_fail_rate360": {"mean": p3, "ci": [lo3, hi3], "k": fails360},
+        "sync_fail_rate360_clustered": clustered_rate_ci(
+            [0.0 if r["synced360"] else 1.0 for r in rows], groups),
         "align_err_mean": float(errs.mean()),
         "align_err_median": float(np.median(errs)),
         "align_err_p90": float(np.percentile(errs, 90)),
         "align_err_p95": float(np.percentile(errs, 95)),
         "align_err_max": float(errs.max()),
+        "align_err360_mean": float(errs360.mean()),
+        "align_err360_median": float(np.median(errs360)),
+        "align_err360_p90": float(np.percentile(errs360, 90)),
+        "align_err360_max": float(errs360.max()),
         "bit_acc_mean": float(bit.mean()),
         "bit_acc_oracle_mean": float(bit_or.mean()),
         "bit_acc": bootstrap_ci(bit),
+        "bit_acc_clustered": clustered_stat_ci(bit, groups),
         "pmr": {"mean": pmr, "ci": [plo, phi], "k": pmr_k},
+        "pmr_clustered": clustered_rate_ci(
+            [1.0 if r["perfect"] else 0.0 for r in rows], groups),
         "delta_rel_mean": float(np.nanmean(
             [r["delta_rel"] for r in rows])),
         "mean_inv_sec": float(np.mean([r["inv_sec"] for r in rows])),
@@ -301,17 +329,24 @@ def report(out_dir, run_meta, summary, rows) -> None:
              f"（{run_meta['grid_n']} 个候选），N={run_meta['N']}，"
              f"载波 B={run_meta['n_bits']}，能量 η={run_meta['energy_per_point']:g}。",
              ""]
-    lines += ["| 条件 | n | 失锁率 [95%CI] | 角误差 中位/p90 | BitAcc | "
-              "PMR [95%CI] | oracle BitAcc | Δrel |",
-              "|---|---:|---|---:|---:|---|---:|---:|"]
+    lines += ["| 条件 | n | n_img | 失锁率(mod180, 逐行) | "
+              "**失锁率(mod180, 按图像聚类)** | 失锁率(**mod360**) | "
+              "角误差 中位/p90 | BitAcc | PMR [95%CI] | oracle BitAcc | Δrel |",
+              "|---|---:|---:|---|---|---|---:|---:|---|---:|---:|"]
 
     def row(label, a):
         if not a:
-            return f"| {label} | -- | -- | -- | -- | -- | -- | -- |"
+            return f"| {label} | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |"
         sf = a["sync_fail_rate"]
+        sfc = a.get("sync_fail_rate_clustered") or {}
+        sf3 = a.get("sync_fail_rate360") or {}
         pm = a["pmr"]
-        return (f"| {label} | {a['n']} | {sf['mean']:.4f} "
-                f"[{sf['ci'][0]:.3f}, {sf['ci'][1]:.3f}] | "
+        return (f"| {label} | {a['n']} | {a.get('n_images', '--')} | "
+                f"{sf['mean']:.4f} [{sf['ci'][0]:.3f}, {sf['ci'][1]:.3f}] | "
+                f"{sfc.get('mean', float('nan')):.4f} "
+                f"[{sfc.get('ci', [float('nan')]*2)[0]:.3f}, "
+                f"{sfc.get('ci', [float('nan')]*2)[1]:.3f}] | "
+                f"{sf3.get('mean', float('nan')):.4f} | "
                 f"{a['align_err_median']:.2f} / {a['align_err_p90']:.2f} | "
                 f"{a['bit_acc_mean']:.4f} | {pm['mean']:.3f} "
                 f"[{pm['ci'][0]:.3f}, {pm['ci'][1]:.3f}] | "
@@ -333,9 +368,18 @@ def report(out_dir, run_meta, summary, rows) -> None:
               f"{pi['images_with_any_fail']} 张至少有一次失锁；"
               f"平均逐图失锁率 {pi['mean_sync_fail_rate']:.4f}；"
               f"平均逐图 BitAcc {pi['mean_bit_acc']:.4f}。", "",
-              "角误差定义为 `min(|Δ| mod 180, 180-|Δ| mod 180)`，"
-              "与载波的 Hermitian 对径对称一致；`oracle BitAcc` 是在真实角度上"
-              "解码得到的，用来区分“同步失败”与“载荷本身失败”。", ""]
+              "**两套角度指标**：`mod180` 是 "
+              "`min(|Δ| mod 180, 180-|Δ| mod 180)`，沿用实值载波的假设"
+              "（180° 翻转等价）；`mod360` 是全圆误差 `|wrap360(Δ)|`。"
+              "本方法的复相位掩码**专门打破** 180° 等价性，"
+              "所以判定同步是否成功应当看 `mod360` 一列；`mod180` 仅用于"
+              "与早期数字保持可比。", "",
+              "**区间口径**：`逐行` 列把每条 (图像, 角度) 记录当作独立样本"
+              "（`wilson`），在同一批图像被反复测量时会低估不确定性；"
+              "`按图像聚类` 列用图像级 block bootstrap，"
+              "把整张图的所有角度一起重采样，才是可用于泛化断言的区间。", "",
+              "`oracle BitAcc` 是在真实角度上解码得到的，"
+              "用来区分「同步失败」与「载荷本身失败」。", ""]
     path = os.path.join(out_dir, "summary.md")
     os.makedirs(out_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
