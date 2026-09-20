@@ -1,0 +1,11 @@
+# Keep shell scripts LF on every platform: CRLF breaks `bash script.sh`.
+*.sh text eol=lf
+
+# Python and docs: normalise on commit, check out per platform.
+*.py text
+*.md text
+*.json text
+*.txt text
+
+# Carrier designs are binary NumPy archives: never touch them.
+*.npz binary

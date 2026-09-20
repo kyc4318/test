@@ -1,0 +1,534 @@
+{
+  "config": {
+    "script": "run_capacity_quality_pareto.py",
+    "designs": [
+      "results/design_searched_realgeom.npz",
+      "results/design_B16_s0.npz"
+    ],
+    "design_hashes": {
+      "results/design_searched_realgeom.npz": "5712045036ef",
+      "results/design_B16_s0.npz": "c660c079dd95"
+    },
+    "etas": [
+      5000.0,
+      10000.0,
+      20000.0
+    ],
+    "cases": [
+      "clean",
+      "rot45",
+      "rot+noise0.05"
+    ],
+    "N": 50,
+    "start": 0,
+    "grid_step": 2.0,
+    "clip": true,
+    "lpips": true,
+    "cells": [
+      "design_searched_realgeom_eta5000",
+      "design_searched_realgeom_eta10000",
+      "design_searched_realgeom_eta20000",
+      "design_B16_s0_eta5000",
+      "design_B16_s0_eta10000",
+      "design_B16_s0_eta20000"
+    ],
+    "provenance": {
+      "protocol_version": "p0-2026-09-18",
+      "created": "2026-09-20 21:57:52",
+      "python": "3.10.20",
+      "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.31",
+      "torch": "2.1.2+cu121",
+      "cuda": "12.1",
+      "gpu": "NVIDIA GeForce RTX 4090 D"
+    }
+  },
+  "summary": {
+    "design_searched_realgeom_eta5000": {
+      "design": "results/design_searched_realgeom.npz",
+      "eta": 5000.0,
+      "n_bits": 8,
+      "n": 50,
+      "quality": {
+        "psnr": 14.775580534210395,
+        "ssim": 0.5200736583554808,
+        "lpips": 0.4084213399887085,
+        "clip_w": 0.32423168152570725,
+        "clip_delta": -0.0074219232797622684
+      },
+      "cases": {
+        "clean": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.0
+        },
+        "rot45": {
+          "n": 50,
+          "bit_acc_mean": 0.97,
+          "bit_acc_oracle_mean": 0.9925,
+          "pmr": {
+            "mean": 0.82,
+            "ci": [
+              0.6920368054529739,
+              0.902299172675462
+            ],
+            "k": 41
+          },
+          "sync_fail": {
+            "mean": 0.02,
+            "ci": [
+              0.0035391680889764604,
+              0.10495686471836953
+            ],
+            "k": 1
+          },
+          "align_err_mean": 2.24
+        },
+        "rot+noise0.05": {
+          "n": 50,
+          "bit_acc_mean": 0.83,
+          "bit_acc_oracle_mean": 0.98,
+          "pmr": {
+            "mean": 0.7,
+            "ci": [
+              0.562493877226366,
+              0.8089661091039063
+            ],
+            "k": 35
+          },
+          "sync_fail": {
+            "mean": 0.28,
+            "ci": [
+              0.17474014357680362,
+              0.4166538714598967
+            ],
+            "k": 14
+          },
+          "align_err_mean": 11.228230219396472
+        }
+      }
+    },
+    "design_searched_realgeom_eta10000": {
+      "design": "results/design_searched_realgeom.npz",
+      "eta": 10000.0,
+      "n_bits": 8,
+      "n": 50,
+      "quality": {
+        "psnr": 12.103685968587946,
+        "ssim": 0.3943711783647468,
+        "lpips": 0.5684553635120392,
+        "clip_w": 0.316841276884079,
+        "clip_delta": -0.014812327921390533
+      },
+      "cases": {
+        "clean": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.0
+        },
+        "rot45": {
+          "n": 50,
+          "bit_acc_mean": 0.995,
+          "bit_acc_oracle_mean": 0.995,
+          "pmr": {
+            "mean": 0.96,
+            "ci": [
+              0.8653966212204534,
+              0.9889613473391734
+            ],
+            "k": 48
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 1.0
+        },
+        "rot+noise0.05": {
+          "n": 50,
+          "bit_acc_mean": 0.9675,
+          "bit_acc_oracle_mean": 0.9925,
+          "pmr": {
+            "mean": 0.88,
+            "ci": [
+              0.7619492111337642,
+              0.9438247628937535
+            ],
+            "k": 44
+          },
+          "sync_fail": {
+            "mean": 0.08,
+            "ci": [
+              0.031549003255790686,
+              0.18838502545063704
+            ],
+            "k": 4
+          },
+          "align_err_mean": 5.31295693045452
+        }
+      }
+    },
+    "design_searched_realgeom_eta20000": {
+      "design": "results/design_searched_realgeom.npz",
+      "eta": 20000.0,
+      "n_bits": 8,
+      "n": 50,
+      "quality": {
+        "psnr": 9.61892463347457,
+        "ssim": 0.23468019431679948,
+        "lpips": 0.845261058807373,
+        "clip_w": 0.20326120441779494,
+        "clip_delta": -0.12839240038767458
+      },
+      "cases": {
+        "clean": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.0
+        },
+        "rot45": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 1.0
+        },
+        "rot+noise0.05": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.5356029026379323
+        }
+      }
+    },
+    "design_B16_s0_eta5000": {
+      "design": "results/design_B16_s0.npz",
+      "eta": 5000.0,
+      "n_bits": 16,
+      "n": 50,
+      "quality": {
+        "psnr": 14.96999308009544,
+        "ssim": 0.5335486368563598,
+        "lpips": 0.3929890161752701,
+        "clip_w": 0.3332269164919853,
+        "clip_delta": 0.0015733116865158082
+      },
+      "cases": {
+        "clean": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.0
+        },
+        "rot45": {
+          "n": 50,
+          "bit_acc_mean": 0.84375,
+          "bit_acc_oracle_mean": 0.94125,
+          "pmr": {
+            "mean": 0.24,
+            "ci": [
+              0.14297252401872207,
+              0.3741294937519236
+            ],
+            "k": 12
+          },
+          "sync_fail": {
+            "mean": 0.22,
+            "ci": [
+              0.12753786224302288,
+              0.35241815689459555
+            ],
+            "k": 11
+          },
+          "align_err_mean": 12.68
+        },
+        "rot+noise0.05": {
+          "n": 50,
+          "bit_acc_mean": 0.7525,
+          "bit_acc_oracle_mean": 0.93375,
+          "pmr": {
+            "mean": 0.34,
+            "ci": [
+              0.2243676963506106,
+              0.47846431458517147
+            ],
+            "k": 17
+          },
+          "sync_fail": {
+            "mean": 0.44,
+            "ci": [
+              0.3116198721023534,
+              0.5769421319985648
+            ],
+            "k": 22
+          },
+          "align_err_mean": 18.139630261566086
+        }
+      }
+    },
+    "design_B16_s0_eta10000": {
+      "design": "results/design_B16_s0.npz",
+      "eta": 10000.0,
+      "n_bits": 16,
+      "n": 50,
+      "quality": {
+        "psnr": 12.427276409670604,
+        "ssim": 0.40871166419216126,
+        "lpips": 0.547557277083397,
+        "clip_w": 0.3193530854582787,
+        "clip_delta": -0.012300519347190857
+      },
+      "cases": {
+        "clean": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.0
+        },
+        "rot45": {
+          "n": 50,
+          "bit_acc_mean": 0.96625,
+          "bit_acc_oracle_mean": 0.9775,
+          "pmr": {
+            "mean": 0.58,
+            "ci": [
+              0.4423319668777783,
+              0.7062520276543307
+            ],
+            "k": 29
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 1.0
+        },
+        "rot+noise0.05": {
+          "n": 50,
+          "bit_acc_mean": 0.89,
+          "bit_acc_oracle_mean": 0.975,
+          "pmr": {
+            "mean": 0.58,
+            "ci": [
+              0.4423319668777783,
+              0.7062520276543307
+            ],
+            "k": 29
+          },
+          "sync_fail": {
+            "mean": 0.14,
+            "ci": [
+              0.06950745262022862,
+              0.2618645719852809
+            ],
+            "k": 7
+          },
+          "align_err_mean": 6.95815099099072
+        }
+      }
+    },
+    "design_B16_s0_eta20000": {
+      "design": "results/design_B16_s0.npz",
+      "eta": 20000.0,
+      "n_bits": 16,
+      "n": 50,
+      "quality": {
+        "psnr": 9.882550600894165,
+        "ssim": 0.25338157233189335,
+        "lpips": 0.8084018623828888,
+        "clip_w": 0.21308462876826526,
+        "clip_delta": -0.11856897603720426
+      },
+      "cases": {
+        "clean": {
+          "n": 50,
+          "bit_acc_mean": 1.0,
+          "bit_acc_oracle_mean": 1.0,
+          "pmr": {
+            "mean": 1.0,
+            "ci": [
+              0.9286499658256813,
+              1.0
+            ],
+            "k": 50
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.0
+        },
+        "rot45": {
+          "n": 50,
+          "bit_acc_mean": 0.98125,
+          "bit_acc_oracle_mean": 0.99375,
+          "pmr": {
+            "mean": 0.74,
+            "ci": [
+              0.6044657801100008,
+              0.8412862034863262
+            ],
+            "k": 37
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 1.0
+        },
+        "rot+noise0.05": {
+          "n": 50,
+          "bit_acc_mean": 0.99,
+          "bit_acc_oracle_mean": 0.99375,
+          "pmr": {
+            "mean": 0.84,
+            "ci": [
+              0.7148551903823401,
+              0.9166267863791231
+            ],
+            "k": 42
+          },
+          "sync_fail": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.07135003417431873
+            ],
+            "k": 0
+          },
+          "align_err_mean": 0.5373936774065426
+        }
+      }
+    }
+  },
+  "elapsed_sec": 2229.726123571396
+}

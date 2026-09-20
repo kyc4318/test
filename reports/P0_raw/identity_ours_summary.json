@@ -1,0 +1,223 @@
+{
+  "config": {
+    "script": "run_identity_benchmark.py",
+    "design": "results/design_searched_realgeom.npz",
+    "design_hash": "5712045036ef",
+    "n_keys": 128,
+    "key_seed": 7,
+    "cases": [
+      "clean",
+      "rot45",
+      "rot75"
+    ],
+    "split": {
+      "start": 0,
+      "calib_n": 20,
+      "test_n": 20,
+      "calib_offset": 0,
+      "test_offset": 500,
+      "calib_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "test_ids": [
+        500,
+        501,
+        502,
+        503,
+        504,
+        505,
+        506,
+        507,
+        508,
+        509,
+        510,
+        511,
+        512,
+        513,
+        514,
+        515,
+        516,
+        517,
+        518,
+        519
+      ]
+    },
+    "fpr": 0.01,
+    "grid_step": 2.0,
+    "energy_per_point": 10000.0,
+    "registries": {
+      "ours": {
+        "key_space": 256,
+        "registry": [
+          132,
+          248,
+          139,
+          24,
+          57,
+          65,
+          2,
+          220,
+          210,
+          94,
+          242,
+          170,
+          3,
+          96,
+          193,
+          22,
+          126,
+          74,
+          88,
+          78
+        ],
+        "unregistered": [
+          154,
+          133,
+          62,
+          122,
+          99,
+          120,
+          161,
+          217,
+          111,
+          50,
+          11,
+          205,
+          190,
+          222,
+          80,
+          70,
+          158,
+          200,
+          153,
+          52
+        ]
+      }
+    },
+    "provenance": {
+      "protocol_version": "p0-2026-09-18",
+      "created": "2026-09-20 22:57:20",
+      "python": "3.10.20",
+      "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.31",
+      "torch": "2.1.2+cu121",
+      "cuda": "12.1",
+      "gpu": "NVIDIA GeForce RTX 4090 D"
+    }
+  },
+  "summary": {
+    "ours": {
+      "n_keys_registered": 20,
+      "key_space": 256,
+      "payload_bits": 8,
+      "cases": {
+        "clean": {
+          "n_pos_calib": 20,
+          "n_pos_test": 20,
+          "id_acc_soft": {
+            "mean": 1.0,
+            "ci": [
+              0.8388698745050667,
+              1.0
+            ],
+            "k": 20
+          },
+          "id_acc_hard": {
+            "mean": 1.0,
+            "ci": [
+              0.8388698745050667,
+              1.0
+            ],
+            "k": 20
+          },
+          "margin_mean_pos": 190.592112159729,
+          "margin_mean_null": 5.177605411410331,
+          "auc_pos_vs_null": 1.0,
+          "tpr_at_calibrated_fpr": 1.0,
+          "fpr_realised_null": 0.0,
+          "decode_sec_mean": 0.20889809330304462,
+          "auc_pos_vs_unregistered": 0.9175,
+          "tpr_at_calibrated_fpr_unreg": 1.0,
+          "fpr_realised_unregistered": 0.5
+        },
+        "rot45": {
+          "n_pos_calib": 20,
+          "n_pos_test": 20,
+          "id_acc_soft": {
+            "mean": 1.0,
+            "ci": [
+              0.8388698745050667,
+              1.0
+            ],
+            "k": 20
+          },
+          "id_acc_hard": {
+            "mean": 1.0,
+            "ci": [
+              0.8388698745050667,
+              1.0
+            ],
+            "k": 20
+          },
+          "margin_mean_pos": 35.05972725749016,
+          "margin_mean_null": 4.799704471230507,
+          "auc_pos_vs_null": 0.99,
+          "tpr_at_calibrated_fpr": 0.95,
+          "fpr_realised_null": 0.0,
+          "decode_sec_mean": 0.2083688994248708,
+          "auc_pos_vs_unregistered": 0.905,
+          "tpr_at_calibrated_fpr_unreg": 0.95,
+          "fpr_realised_unregistered": 0.3
+        },
+        "rot75": {
+          "n_pos_calib": 20,
+          "n_pos_test": 20,
+          "id_acc_soft": {
+            "mean": 1.0,
+            "ci": [
+              0.8388698745050667,
+              1.0
+            ],
+            "k": 20
+          },
+          "id_acc_hard": {
+            "mean": 0.95,
+            "ci": [
+              0.7638641064874331,
+              0.9911187805671268
+            ],
+            "k": 19
+          },
+          "margin_mean_pos": 43.72315421104431,
+          "margin_mean_null": 5.148704063892365,
+          "auc_pos_vs_null": 1.0,
+          "tpr_at_calibrated_fpr": 1.0,
+          "fpr_realised_null": 0.0,
+          "decode_sec_mean": 0.20826422969500225,
+          "auc_pos_vs_unregistered": 0.8675,
+          "tpr_at_calibrated_fpr_unreg": 1.0,
+          "fpr_realised_unregistered": 0.7
+        }
+      }
+    }
+  },
+  "elapsed_sec": 815.0409407615662
+}

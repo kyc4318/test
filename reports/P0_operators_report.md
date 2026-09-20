@@ -1,0 +1,135 @@
+# P0 证据闸门 2b：旋转算子泛化（unseen operators）
+
+**状态**：已跑完（RTX 4090D，2026-09-20）。
+**脚本**：`run_unseen_operators.py`（本轮新写；`p0_common` 与 canonical 核心均未改动）。
+**数据**：`runs/p0_operators/step2_N15/`。
+
+## 0. 一句话结论
+
+**通过，而且是本轮最干净的一条正面结论。**
+把**攻击端**换成 4 种训练时从未用过的旋转实现（PIL bicubic、OpenCV 线性+reflect 填充、
+OpenCV cubic+常值填充、PIL expand+crop）后，在 canonical 解码下 BitAcc 仍为
+0.9938–0.9958（参考格 0.9958），失锁率 0.000–0.033。
+其中 **`pil_expand_crop` 与参考格数值完全相同**（0.000 / 0.9958 / 0.967）——
+该算子把零填充楔形**完全去掉且不改变尺度**，因此这一格直接回答
+「同步是否在读黑边」：**没有**。
+把**解码端**换成未见的插值核（bilinear / bicubic）同样无损失，bicubic 甚至略好。
+唯一明显退化来自**把旋转中心挪到 DFT 原点（像素 32）**，即命题 3 的半像素几何。
+
+## 1. 本轮同时查清的三件实现事实（会影响论文表述）
+
+这三条都是为了让「算子」这一轴可解释而做的强制自检，结论直接改变草稿措辞。
+
+| # | 事实 | 证据 | 对草稿的影响 |
+|---|---|---|---|
+| 1 | **canonical 的潜空间旋转是最近邻，不是双线性**：`TF.rotate` 的默认 `interpolation` 是 `NEAREST`，而 `run_paper_compare.rotate_latent` 与设计搜索 `search_*.py` 都调用 `TF.rotate(..., fill=0)` | `rotate_latent(z, −37.3)` 与 `TF.rotate(z, −37.3, NEAREST)` 的 max\|diff\| = **0.000e+00**；与 BILINEAR 相差 3.05 | §4.4 写的「潜空间旋转（双线性重采样）」**与代码不符**，必须改成最近邻（或说明为何改用双线性并重跑） |
+| 2 | **canonical 的旋转中心是物理中心 31.5**（命题 3 的前提成立） | 脉冲测试：`TF.rotate` 默认把 (row 31, col 31) 映到 (32, 31)，与绕 31.5 的解析解一致；`_grid_rotate(center_f=[0,0])` 与 `TF.rotate` 完全一致 | 命题 3 的「物理中心 31.5 vs DFT 原点 32」表述**正确** |
+| 3 | **「绕 DFT 原点」在 torchvision 里不是 `center=[32,32]`**：`TF.rotate` 内部先做 `center_f = c − size/2`，所以 API 的 `center=[32,32]` 反而等于物理中心；真正的 DFT 原点对应 `center_f=[+0.5,+0.5]` | 脉冲定点测试 + 网格逐点比对 | 复现命题 3 的消融时**必须用对坐标约定**，否则会把「绕物理中心」误当成「绕 DFT 原点」 |
+
+自检是硬门禁：`run_unseen_operators.py` 启动时先跑 `selfcheck_operators()`，
+在**解码圆盘（半径 ≤24）内**要求 `_grid_rotate` 与 torchvision 的偏差 < 1e-4，
+否则直接 `SystemExit`。实测最大偏差 **1.19e-07**（float32 精度）。
+（全张量最大偏差 0.62–0.70，只出现在旋转后的**角落**——torchvision 会额外用掩码通道
+向 `fill` 混合，而解码只读半径 ≤20 的环带，距边界 ≥12 px。）
+
+## 2. 设置
+
+| 项 | 设置 |
+|---|---|
+| 载波 | `design_searched_realgeom.npz`（B=8，η=1e4）；N=15 |
+| 角度 | 37.3°, 58.7°, 102.5°, −30°（全部非格点，2° 搜索网格） |
+| 攻击算子（512×512 图像） | `pil_bilinear`（参考，此前一直用）、`pil_bicubic`、`pil_expand_crop`、`cv2_linear_reflect`、`cv2_cubic_constant` |
+| 解码算子（64×64 潜变量，反旋转 −γ） | `tv_nearest_c31.5`（canonical）、`tv_bilinear_c31.5`、`tv_bicubic_c31.5`、`tv_bilinear_c32`（DFT 原点） |
+| 样本数 | 5 × 4 = 20 格，每格 15×4 = **60**；合计 1200 行 |
+
+几何一致性：PIL 与 OpenCV 的正角度方向一致（脉冲 (100,300) → (105,197)，
+与绕 (255.5,255.5) 转 37.3° 的解析解吻合），且两者默认中心都等于物理中心。
+
+## 3. 主表（单元格 = 失锁率 / BitAcc（PMR））
+
+| 攻击算子 \ 解码算子 | `tv_nearest_c31.5`（canonical） | `tv_bilinear_c31.5` | `tv_bicubic_c31.5` | `tv_bilinear_c32` |
+|---|---|---|---|---|
+| `pil_bilinear`（参考） | **0.000 / 0.9958 (0.97)** | 0.000 / 0.9958 (0.97) | 0.000 / 0.9979 (0.98) | 0.033 / 0.9313 (0.73) |
+| `pil_bicubic` | 0.000 / 0.9938 (0.95) | 0.000 / 0.9979 (0.98) | 0.000 / 0.9979 (0.98) | 0.033 / 0.9333 (0.75) |
+| `pil_expand_crop`（**去黑边、不变尺度**） | **0.000 / 0.9958 (0.97)** | 0.000 / 0.9958 (0.97) | 0.000 / 0.9979 (0.98) | 0.033 / 0.9313 (0.73) |
+| `cv2_linear_reflect` | 0.033 / 0.9771 (0.90) | 0.067 / 0.9646 (0.90) | 0.033 / 0.9771 (0.93) | **0.217 / 0.8604 (0.62)** |
+| `cv2_cubic_constant` | 0.000 / 0.9938 (0.95) | 0.000 / 0.9958 (0.97) | 0.000 / 0.9958 (0.97) | 0.033 / 0.9375 (0.78) |
+
+每格 n=60，失锁率的 95% Wilson 上界：0 次失锁 → 0.060，1 次 → 0.089，2 次 → 0.114。
+
+### 3.1 相对参考格的落差（固定 canonical 解码）
+
+| 攻击算子 | ΔBitAcc | Δ失锁率 | 解读 |
+|---|---:|---:|---|
+| `pil_bicubic` | −0.0021 | +0.000 | 未见算子，无损失 |
+| `pil_expand_crop` | **+0.0000** | +0.000 | **完全等价 → 不依赖零填充** |
+| `cv2_linear_reflect` | −0.0188 | +0.033 | 唯一有可见落差者（reflect 填充改变了环带外沿的内容，经 VAE+反演渗入） |
+| `cv2_cubic_constant` | −0.0021 | +0.000 | 未见算子，无损失 |
+
+### 3.2 汇总轴
+
+| 轴 | 取值 | n | 失锁率 | BitAcc | PMR |
+|---|---|---:|---:|---:|---:|
+| 攻击算子 | `pil_bilinear` | 240 | 0.008 | 0.9802 | 0.912 |
+| 攻击算子 | `pil_bicubic` | 240 | 0.008 | 0.9807 | 0.917 |
+| 攻击算子 | `pil_expand_crop` | 240 | 0.008 | 0.9802 | 0.912 |
+| 攻击算子 | `cv2_cubic_constant` | 240 | 0.008 | 0.9807 | 0.917 |
+| 攻击算子 | `cv2_linear_reflect` | 240 | **0.087** | 0.9448 | 0.838 |
+| 解码算子 | `tv_nearest_c31.5` | 300 | 0.007 | 0.9912 | 0.947 |
+| 解码算子 | `tv_bilinear_c31.5` | 300 | 0.013 | 0.9900 | 0.957 |
+| 解码算子 | `tv_bicubic_c31.5` | 300 | 0.007 | **0.9933** | **0.970** |
+| 解码算子 | `tv_bilinear_c32` | 300 | **0.070** | 0.9187 | 0.723 |
+
+（各攻击算子的 240 = 60 × 4 个解码算子，池化后含 c32 格，故绝对值低于 §3 的 canonical 列。）
+
+## 4. 按预注册规则的解读
+
+规则在脚本里、跑之前就写好了，这里逐条对照：
+
+1. **「各攻击算子在固定解码算子下都落在参考格区间内 → 鲁棒性是载波/反演通道的性质」*
+   → **满足**。除 `cv2_linear_reflect`（ΔBitAcc −0.019、失锁 +3.3%，仍在 Wilson 区间内）
+   外全部为 0 落差；`pil_expand_crop` 逐位相同。
+2. **「只有 `*_c32` 解码格变差 → 落差来自命题 3 的半像素几何」**
+   → **满足且是唯一系统性退化**：换成绕 DFT 原点后 BitAcc 0.9187（−0.073）、
+   PMR 0.723（−0.244）、失锁 0.070；且与 `cv2_linear_reflect` 叠加时最差
+   （失锁 0.217、BitAcc 0.860）。这与命题 3 的预测方向一致：
+   解码端必须复现物理中心，误用 DFT 原点会付出真实代价。
+3. **「cv2 / expand-crop 攻击格在 canonical 解码下明显变差 → 设计搜索过拟合某插值几何」**
+   → **不成立**（未触发）。因此本批**没有**发现「对具体 `rotate()` 过拟合」的证据。
+
+**额外的一条**：canonical 解码用最近邻、而 bilinear/bicubic 同样甚至更好，
+说明方法**不依赖**某个特定插值核——这对第 3 条质疑是进一步的加强。
+
+## 5. 与验收条件对照
+
+| 验收条件 | 结果 |
+|---|---|
+| unseen 攻击算子下性能保持 | ✅ BitAcc 0.994–0.996（参考 0.996），最差落差 −0.019 |
+| 报告 BER/失锁率下降幅度 | ✅ 失锁 0.000–0.033（参考 0.000） |
+| 去填充但不变尺度的对照 | ✅ `pil_expand_crop` 与参考格**完全一致** |
+| 区分「过拟合算子」与「半像素几何」 | ✅ c32 列单独退化，攻击算子列基本不变 |
+
+## 6. 必须注意的规模限制
+
+每格 n=60（15 张图 × 4 个角），因此：
+* 失锁率的经验分辨率是 1/60 ≈ 1.7%，Wilson 上界 6–11%；
+* `cv2_linear_reflect` 的 −0.019 BitAcc / +3.3% 失锁**不能**据此断言「显著更差」，
+  只能说「有可见落差，需扩量确认」；
+* 正式版建议：N=50（或 100）× 6 个角，并把角度覆盖扩到连续抽样。
+
+## 7. 复现命令与产物
+
+```bash
+cd /root/sector_watermark && conda activate sector
+python -u run_unseen_operators.py --design results/design_searched_realgeom.npz \
+  --N 15 --angles "37.3,58.7,102.5,-30" \
+  --attack_ops "pil_bilinear,pil_bicubic,pil_expand_crop,cv2_linear_reflect,cv2_cubic_constant" \
+  --decode_ops "tv_nearest_c31.5,tv_bilinear_c31.5,tv_bicubic_c31.5,tv_bilinear_c32" \
+  --grid_step 2 --out_dir runs/p0_operators
+
+# 算子一致性自检（脚本启动时会自动跑，也可单独跑）
+python -c "import sys; sys.path.insert(0,'.'); \
+from run_unseen_operators import selfcheck_operators; selfcheck_operators()"
+```
+
+产物：`runs/p0_operators/step2_N15/{rows.jsonl,summary.json,summary.md}`。

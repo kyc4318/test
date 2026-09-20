@@ -1,0 +1,302 @@
+{
+  "config": {
+    "script": "run_paper_controls.py",
+    "design": "results/design_searched_realgeom.npz",
+    "design_hash": "a3f60a6633f2",
+    "wrongkey_designs": [],
+    "n_bits": 8,
+    "grid_step": 2.0,
+    "grid_n": 180,
+    "energy_per_point": 10000.0,
+    "cases": [
+      "clean",
+      "rot45",
+      "rot75"
+    ],
+    "fprs": [
+      0.01,
+      0.05
+    ],
+    "sync_tol": 2.0,
+    "rotate_resample": "bilinear",
+    "rotate_fill": 0,
+    "crop_black": true,
+    "extra_noise": 0.0,
+    "split": {
+      "start": 0,
+      "calib_n": 50,
+      "test_n": 50,
+      "calib_offset": 0,
+      "test_offset": 500,
+      "calib_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49
+      ],
+      "test_ids": [
+        500,
+        501,
+        502,
+        503,
+        504,
+        505,
+        506,
+        507,
+        508,
+        509,
+        510,
+        511,
+        512,
+        513,
+        514,
+        515,
+        516,
+        517,
+        518,
+        519,
+        520,
+        521,
+        522,
+        523,
+        524,
+        525,
+        526,
+        527,
+        528,
+        529,
+        530,
+        531,
+        532,
+        533,
+        534,
+        535,
+        536,
+        537,
+        538,
+        539,
+        540,
+        541,
+        542,
+        543,
+        544,
+        545,
+        546,
+        547,
+        548,
+        549
+      ]
+    },
+    "provenance": {
+      "protocol_version": "p0-2026-09-18",
+      "created": "2026-09-20 20:09:32",
+      "python": "3.10.20",
+      "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.31",
+      "torch": "2.1.2+cu121",
+      "cuda": "12.1",
+      "gpu": "NVIDIA GeForce RTX 4090 D"
+    }
+  },
+  "summary": {
+    "clean": {
+      "n_wm_calib": 50,
+      "n_wm_test": 50,
+      "n_null_calib": 50,
+      "n_null_test": 50,
+      "null_score_mean_calib": 4018.4664502151786,
+      "null_score_mean_test": 3948.6504867639,
+      "wm_score_mean_test": 287171.06456635654,
+      "auc_test": 1.0,
+      "auc_calib": 1.0,
+      "search_gain_null": 1.7885985173853274,
+      "calibrated": {
+        "0.01": {
+          "tau_max_over_angles": 5927.619924197556,
+          "tpr_test": 1.0,
+          "fpr_test_realised": 0.0,
+          "tpr_calib_in_sample": 1.0,
+          "tau_no_search": 5425.869596801699,
+          "tpr_test_no_search": 1.0,
+          "fpr_test_no_search": 0.0
+        },
+        "0.05": {
+          "tau_max_over_angles": 5425.869596801699,
+          "tpr_test": 1.0,
+          "fpr_test_realised": 0.0,
+          "tpr_calib_in_sample": 1.0,
+          "tau_no_search": 4920.546892590123,
+          "tpr_test_no_search": 1.0,
+          "fpr_test_no_search": 0.0
+        }
+      },
+      "null_angle_leak": {
+        "calib": {
+          "n": 50,
+          "mean_align_err": 36.16,
+          "sync_rate_null": 0.38
+        },
+        "test": {
+          "n": 50,
+          "mean_align_err": 42.64,
+          "sync_rate_null": 0.34
+        }
+      },
+      "wm_sync": {
+        "n": 50,
+        "mean_align_err": 0.0,
+        "sync_fail_rate": 0.0
+      },
+      "wm_bit_acc_mean": 1.0,
+      "wm_pmr": 1.0
+    },
+    "rot45": {
+      "n_wm_calib": 50,
+      "n_wm_test": 50,
+      "n_null_calib": 50,
+      "n_null_test": 50,
+      "null_score_mean_calib": 3658.645688596122,
+      "null_score_mean_test": 3612.6645425286274,
+      "wm_score_mean_test": 4204.334555082572,
+      "auc_test": 0.7236,
+      "auc_calib": 0.712,
+      "search_gain_null": 1.7097868170988668,
+      "calibrated": {
+        "0.01": {
+          "tau_max_over_angles": 5928.0773982131805,
+          "tpr_test": 0.06,
+          "fpr_test_realised": 0.04,
+          "tpr_calib_in_sample": 0.04,
+          "tau_no_search": 4972.515496626032,
+          "tpr_test_no_search": 0.04,
+          "fpr_test_no_search": 0.02
+        },
+        "0.05": {
+          "tau_max_over_angles": 5222.092408437632,
+          "tpr_test": 0.08,
+          "fpr_test_realised": 0.04,
+          "tpr_calib_in_sample": 0.14,
+          "tau_no_search": 3926.4264107840145,
+          "tpr_test_no_search": 0.1,
+          "fpr_test_no_search": 0.02
+        }
+      },
+      "null_angle_leak": {
+        "calib": {
+          "n": 50,
+          "mean_align_err": 46.2,
+          "sync_rate_null": 0.0
+        },
+        "test": {
+          "n": 50,
+          "mean_align_err": 45.6,
+          "sync_rate_null": 0.0
+        }
+      },
+      "wm_sync": {
+        "n": 50,
+        "mean_align_err": 46.04,
+        "sync_fail_rate": 1.0
+      },
+      "wm_bit_acc_mean": 0.4925,
+      "wm_pmr": 0.0
+    },
+    "rot75": {
+      "n_wm_calib": 50,
+      "n_wm_test": 50,
+      "n_null_calib": 50,
+      "n_null_test": 50,
+      "null_score_mean_calib": 3846.3303183991766,
+      "null_score_mean_test": 3652.3114163155315,
+      "wm_score_mean_test": 5150.084176949878,
+      "auc_test": 0.8676,
+      "auc_calib": 0.8364,
+      "search_gain_null": 1.6572644588021823,
+      "calibrated": {
+        "0.01": {
+          "tau_max_over_angles": 5612.184704160086,
+          "tpr_test": 0.32,
+          "fpr_test_realised": 0.04,
+          "tpr_calib_in_sample": 0.26,
+          "tau_no_search": 5612.184704160086,
+          "tpr_test_no_search": 0.0,
+          "fpr_test_no_search": 0.0
+        },
+        "0.05": {
+          "tau_max_over_angles": 5124.816442501383,
+          "tpr_test": 0.44,
+          "fpr_test_realised": 0.06,
+          "tpr_calib_in_sample": 0.5,
+          "tau_no_search": 3896.8867645601867,
+          "tpr_test_no_search": 0.22,
+          "fpr_test_no_search": 0.04
+        }
+      },
+      "null_angle_leak": {
+        "calib": {
+          "n": 50,
+          "mean_align_err": 47.24,
+          "sync_rate_null": 0.0
+        },
+        "test": {
+          "n": 50,
+          "mean_align_err": 42.32,
+          "sync_rate_null": 0.02
+        }
+      },
+      "wm_sync": {
+        "n": 50,
+        "mean_align_err": 33.24,
+        "sync_fail_rate": 1.0
+      },
+      "wm_bit_acc_mean": 0.515,
+      "wm_pmr": 0.0
+    }
+  },
+  "elapsed_sec": 1422.3919723033905
+}
