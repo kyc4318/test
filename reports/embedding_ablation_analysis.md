@@ -3,6 +3,23 @@
 **日期**：2026-09-21｜**脚本**：`run_embedding_ablation.py`（独立脚本，未改 `swm/`）
 **数据**：`runs/embedding_ablation/`（N=20，5 个 arm × 4 个攻击格，同一 prompt + 同一潜变量）
 
+> ## 🔒 路线状态：已封存（2026-09-21，按项目所有者决定）
+>
+> **本项目回退到 canonical（replace）方法，v2 投影 embedding 路线停止推进。**
+>
+> 已核实：`swm/`（`dual_layer.py`/`carriers.py`/`embed.py`/`detect.py`/`metrics.py`）、
+> `run_paper_compare.py`、`paper_protocol.py`、`run_exp.py`、`configs.py`、`pipeline/*`
+> 与首发提交 `e652b56` **逐字节一致**；v2 只新增了本文件与
+> `run_embedding_ablation.py`，没有污染 canonical 路径。
+>
+> 封存理由（本文第 1–3 节的实测）：投影法把图像质量从 11.93 dB 提到 26.94 dB
+> （LPIPS 0.59→0.10、正交补 0.0000），但把每个 bit 的幅度钉在 host 自身投影尺度
+> （|a_j|≈37），与内容 nuisance 同量级，导致**连 clean 都失锁 65–80%**；
+> 虽然真角上 payload 仍可读（oracle BitAcc 0.95–1.00），但角度搜索失效。
+> 这使「质量」与「同步可分辨性」成为同一个旋钮的两端，不宜作为论文主线。
+> 若将来重启：应把第 4 节的 shared-payload 统计量与投影 embedding **合并**测试，
+> 而不是顺序各做一遍。
+
 ## 0. 一句话
 
 **质量问题上投影法几乎完全解决（PSNR +15 dB、LPIPS 0.59→0.10），但它在
