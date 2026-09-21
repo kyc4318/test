@@ -100,7 +100,10 @@ Other verified claims (all with Wilson / bootstrap intervals in `reports/`):
   "the 8-bit design wins on exact-message recovery, and at low energy it also
   wins on per-bit reliability and synchronization" — not "16 bits breaks
   synchronization".
-* **Paired operator differences** (same image / angle / inversion, 50-60 pairs,
+* **Paired operator differences** (same base image / payload / angle / attack
+  strength; note that the *attack-operator* axis changes the attacked image, so
+  each operator goes through its **own** inversion -- only the *decoder-operator*
+  axis shares one inversion -- 50-60 pairs,
   image-clustered bootstrap) replace the weaker "the intervals overlap" reading:
   `cv2_linear_reflect` (reflect padding, no black wedges) is −0.019
   [−0.048, +0.000] / −0.031 [−0.088, +0.000] in BitAcc — **touching zero**, i.e.
@@ -145,6 +148,9 @@ run_inversion_error_spectrum.py   where the inversion error goes (radial/angular
                              in/out of the carrier subspace)
 run_identity_benchmark.py    key-registry identification (ours included)
 run_capacity_quality_pareto.py    capacity x energy quality/robustness Pareto
+run_visual_quality.py        paired visual inspection: same prompt + same latent,
+                             no-watermark vs several eta, amplified difference maps,
+                             contact sheet + per-sample zoom (real images)
 reanalyse_p0.py              offline re-scoring of the stored rows.jsonl
                              (mod-360 sync + image-clustered intervals; CPU only)
 run_p0_queue.sh              generic stage queue
@@ -220,10 +226,37 @@ python add_confidence_intervals.py
 ```bash
 # smoke first, then the real thing
 N_CONTROLS=5 bash run_p0_session.sh controls
-bash run_p0_session.sh all          # controls -> rotation -> operators -> spectrum -> pareto
+bash run_p0_session.sh all          # controls -> rotation -> operators -> padding
+                                    #   -> visual -> spectrum -> pareto
+
+# the two stages that decide the remaining open questions:
+bash run_p0_session.sh padding      # matched cv2 constant/reflect pairs (border-only)
+bash run_p0_session.sh visual       # paired images + difference maps, for human eyes
 ```
 
 Every P0 stage is resumable (append-only `rows.jsonl` with uid de-duplication).
+
+### Looking at the watermarks
+
+The paired distortion numbers are not a substitute for looking at the pictures.
+`run_visual_quality.py` renders, for each of `--N` samples, the *same prompt and
+the same starting latent* with no watermark and with several embedding energies,
+then stacks the images with `|ref - cell| x gain` difference maps plus a
+centre-crop zoom:
+
+```bash
+python run_visual_quality.py --N 4 --etas 0,5e3,1e4,2e4 --lpips \
+  --out_dir runs/visual_quality --report_path results/visual_quality.md
+# pure-PIL layout check, no GPU needed:
+python run_visual_quality.py --selftest
+```
+
+It writes `runs/visual_quality/sheet_all.png`, `sample###_full.png`,
+`sample###_zoom.png`, the per-sample PNGs under `images/<cell>/`, and a markdown
+report with the paired PSNR/SSIM/LPIPS/CLIP numbers. This is the experiment that
+decides whether η=1e4 can stay as the main operating point: a paired PSNR of
+12.10 dB does not by itself say the change is visible, and a CLIP delta of
+−0.0148 does not say it is invisible.
 
 ## The canonical carrier, and the other designs
 
@@ -438,8 +471,10 @@ Read these before quoting anything:
     proven to match, so the run stops instead of silently stamping the current
     fingerprint onto older rows. Set `P0_ADOPT_LEGACY_RUN=1` only after
     verifying by hand that those rows used the same parameters.
-19. **Operator/capacity comparisons use paired differences now.** Same image,
-    same angle, same inversion, two implementations; the difference is
+19. **Operator/capacity comparisons use paired differences now.** Same base
+    image, same payload, same angle and attack strength, two implementations
+    (on the attack-operator axis each operator has its own inversion; only the
+    decoder-operator axis shares one); the difference is
     bootstrapped over images (`clustered_paired_diff`). Overlapping Wilson
     intervals are not a test, and a degenerate paired interval (`†`) means "no
     evidence of a difference", never "proven equal". The B8-vs-B16 table

@@ -76,12 +76,16 @@
 >
 > **1. 算子泛化：通过（但要用配对差说）。**
 > 19 个 cell 相对参考格 `pil_bilinear × tv_nearest_c31.5` 的**配对差**
-> （同图、同角度、同一次反演；按图像聚类 bootstrap，50–60 对）见
+> （同一基础图像、同一载荷、同一旋转角与攻击强度下的配对；**每个攻击算子各自
+> 经过自己对应的 inversion**——攻击算子轴改变的是攻击图像本身，因此不存在
+> 「同一次反演」；只有**解码算子**轴才共用同一次反演。按图像聚类 bootstrap，
+> 50–60 对）见
 > [`P0_reanalysis_mod360.md`](P0_reanalysis_mod360.md)：
 >
-> * 换成 `pil_bicubic`、`cv2_cubic_constant`、`cv2_linear_constant`、
->   或解码端换成 bilinear/bicubic 核：ΔBitAcc 的聚类区间**跨 0 或退化为一点**
->   → **未观察到差异**（不能说「证明相同」）；
+> * 换成 `pil_bicubic`、`cv2_cubic_constant`，或解码端换成 bilinear/bicubic 核：
+>   ΔBitAcc 的聚类区间**跨 0 或退化为一点** → **未观察到差异**（不能说「证明相同」）；
+>   ⚠️ `cv2_linear_constant` / `cv2_cubic_reflect` / `cv2_nearest_*` **尚无任何记录**，
+>   它们只是已加入下一轮 matched-padding 实验；本报告不得对它们下任何结论。
 > * `cv2_linear_reflect`（反射填充，无黑边）：ΔBitAcc **−0.019 [−0.048, +0.000]**
 >   （nearest 解码）/ **−0.031 [−0.088, +0.000]**（bilinear 解码），
 >   区间**触到 0** → **未达到可分辨的退化**，但方向一致、值得在扩量后复查；

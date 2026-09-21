@@ -32,7 +32,8 @@ from tqdm import tqdm
 
 from paper_protocol import AttackCtx, apply_case, case_seed
 from p0_common import (OursCore, ResumeLog, align_error, bits_from_rng,
-                       case_rotation_angle, config_hash, is_synced,
+                       case_rotation_angle, config_hash, design_bytes_hash,
+                       is_synced,
                        make_config, perfect_match, provenance, resolve_device,
                        safe_print, search_grid, wilson, write_json)
 
@@ -150,7 +151,7 @@ def main() -> None:
     run_meta = {
         "script": "run_capacity_quality_pareto.py",
         "designs": designs,
-        "design_hashes": {d: config_hash({"design": d}) for d in designs},
+        "design_hashes": {d: design_bytes_hash(d) for d in designs},
         "etas": etas,
         "cases": cases,
         "N": args.N,

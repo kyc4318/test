@@ -36,7 +36,7 @@ from tqdm import tqdm
 
 from p0_common import (OursCore, ResumeLog, SplitPlan, auc,
                        calibrate_threshold, case_rotation_angle, config_hash,
-                       make_config, provenance, rate_above, resolve_device,
+                       design_bytes_hash, make_config, provenance, rate_above, resolve_device,
                        safe_print, search_grid, wilson, write_json)
 from paper_protocol import AttackCtx, apply_case, case_seed
 
@@ -294,7 +294,7 @@ def main() -> None:
     run_meta = {
         "script": "run_identity_benchmark.py",
         "design": args.design,
-        "design_hash": config_hash({"design": args.design}),
+        "design_hash": design_bytes_hash(args.design),
         "n_keys": args.n_keys,
         "key_seed": args.key_seed,
         "cases": cases,

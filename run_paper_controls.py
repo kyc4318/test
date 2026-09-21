@@ -40,6 +40,7 @@ from paper_protocol import AttackCtx, apply_token, case_seed
 from p0_common import (OursCore, ResumeLog, SplitPlan, add_gaussian_noise,
                        align_error, auc, bit_acc, bits_from_rng,
                        calibrate_threshold, case_rotation_angle, config_hash,
+                       design_bytes_hash,
                        is_synced, make_config, perfect_match, provenance,
                        rate_above, resolve_device, rotate_image, safe_print,
                        inscribed_crop_after_rotation, search_grid, signed_error,
@@ -141,8 +142,7 @@ def main() -> None:
     run_meta = {
         "script": "run_paper_controls.py",
         "design": args.design,
-        "design_hash": config_hash({"design": open(args.design, "rb").read()
-                                    if os.path.exists(args.design) else args.design}),
+        "design_hash": design_bytes_hash(args.design),
         "wrongkey_designs": list(wrong),
         "n_bits": core.n_bits,
         "grid_step": args.grid_step,

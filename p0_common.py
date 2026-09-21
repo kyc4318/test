@@ -78,6 +78,45 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+#: modules whose bytes participate in the resume fingerprint: a change here can
+#: change what a stored row means, so it must not pass as "same configuration"
+CORE_CODE_FILES = (
+    "p0_common.py", "paper_protocol.py", "configs.py", "run_exp.py",
+    "swm/carriers.py", "swm/embed.py", "swm/detect.py", "swm/metrics.py",
+    "swm/dual_layer.py",
+    "pipeline/optim_utils.py", "pipeline/inverse_stable_diffusion.py",
+    "pipeline/modified_stable_diffusion.py",
+)
+
+
+def design_bytes_hash(path: str) -> str:
+    """Hash a carrier design file's *bytes* (not its path string).
+
+    Hashing the path told us nothing: the same path with different contents
+    (a re-searched design) produced the same ``design_hash``.
+    """
+    try:
+        with open(path, "rb") as f:
+            return config_hash({"design_bytes": f.read()})
+    except OSError:
+        return "missing"
+
+
+def code_fingerprint(root: Optional[str] = None) -> str:
+    """Hash the bytes of the core modules that determine what a row means."""
+    root = root or os.path.dirname(os.path.abspath(__file__))
+    h = hashlib.sha256()
+    seen = 0
+    for rel in CORE_CODE_FILES:
+        p = os.path.join(root, rel)
+        if os.path.exists(p):
+            h.update(rel.encode())
+            with open(p, "rb") as f:
+                h.update(f.read())
+            seen += 1
+    return h.hexdigest()[:12] if seen else "unknown"
+
+
 # --------------------------------------------------------------------------- #
 # angles
 # --------------------------------------------------------------------------- #
@@ -503,13 +542,20 @@ class ResumeLog:
                                   this configuration.  Adopting them silently and
                                   stamping the *current* fingerprint on them is
                                   exactly how a stale run contaminates a fresh
-                                  one, so it requires ``adopt_legacy=True``
-                                  (``--adopt_legacy_run``).
+                                  one, so it requires ``adopt_legacy=True``,
+                                  which the scripts expose as the environment
+                                  variable ``P0_ADOPT_LEGACY_RUN=1`` (there is no
+                                  CLI flag for it).
+
+        The hashed configuration also includes a fingerprint of the **core module
+        bytes** (:func:`code_fingerprint`), so editing the method code invalidates
+        a resume even when every command-line argument is unchanged.
         """
         if fingerprint is None:
             return
         side = path + ".fingerprint.json"
-        cur = config_hash(cls._stable(fingerprint))
+        cur = config_hash({**cls._stable(fingerprint),
+                           "_code": code_fingerprint()})
         has_rows = os.path.exists(path) and os.path.getsize(path) > 0
         prev = None
         if os.path.exists(side):
@@ -528,12 +574,12 @@ class ResumeLog:
                     "this configuration. Resuming would keep those rows and "
                     "stamp them with the current fingerprint.\n"
                     "  - use a fresh --out_dir, or\n"
-                    "  - pass --adopt_legacy_run if you have verified by hand "
+                    "  - set P0_ADOPT_LEGACY_RUN=1 if you have verified by hand "
                     "that the existing rows use the same parameters.")
             safe_print(
                 f"[ResumeLog] WARNING: adopting legacy rows at {path} without a "
-                f"fingerprint sidecar (--adopt_legacy_run). The configuration is "
-                f"NOT verified.")
+                f"fingerprint sidecar (P0_ADOPT_LEGACY_RUN=1). The configuration "
+                f"is NOT verified.")
         elif prev is not None and prev != cur:
             raise SystemExit(
                 "[ResumeLog] refusing to resume:\n"
@@ -545,6 +591,7 @@ class ResumeLog:
                 "Use a different --out_dir, or delete the rows file to redo it.")
         try:
             write_json(side, {"fingerprint": cur,
+                              "code_fingerprint": code_fingerprint(),
                               "config": to_jsonable(cls._stable(fingerprint))})
         except Exception as exc:  # pragma: no cover - never block a run on this
             safe_print(f"[ResumeLog] WARNING: could not write {side} ({exc})")

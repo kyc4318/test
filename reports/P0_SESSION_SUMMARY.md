@@ -157,13 +157,15 @@
 | `cv2_linear_reflect`（线性 + reflect 填充，无黑边） | 0.033 | 0.9771 | 0.900 |
 | `cv2_cubic_constant`（cubic + 常值填充） | 0.000 | 0.9938 | 0.950 |
 
-**必须改用配对差来读**（2026-09-21 新增；同图、同角度、同一次反演，
-50–60 对/格，按图像聚类 bootstrap，表见
+**必须改用配对差来读**（2026-09-21 新增；同一基础图像、同一载荷、同一角度与攻击
+强度下的配对，50–60 对/格，按图像聚类 bootstrap；注意**攻击算子轴**上每个算子各自
+经过自己的 inversion，只有解码算子轴才共用同一次反演。表见
 [`P0_reanalysis_mod360.md`](P0_reanalysis_mod360.md)）：
 
-* `pil_bicubic`、`cv2_cubic_constant`、`cv2_linear_constant`，
-  以及解码端的 bilinear/bicubic 核：ΔBitAcc 的聚类区间**跨 0 或退化** →
-  **未观察到差异**（不是「证明相同」）；
+* `pil_bicubic`、`cv2_cubic_constant`，以及解码端的 bilinear/bicubic 核：
+  ΔBitAcc 的聚类区间**跨 0 或退化** → **未观察到差异**（不是「证明相同」）；
+  ⚠️ `cv2_linear_constant`（以及 `cv2_cubic_reflect`、`cv2_nearest_*`）
+  **目前没有任何记录**——它们已加入下一轮 matched-padding 实验，本报告不得对它们下结论；
 * `cv2_linear_reflect`（**跨实现**比较：不同库 + 不同边界 + cubic/linear 不同）：
   ΔBitAcc = **−0.019 [−0.048, +0.000]**（nearest）
   / **−0.031 [−0.088, +0.000]**（bilinear），区间**触到 0** →
@@ -273,7 +275,9 @@ SSIM **0.394**、LPIPS **0.569**，说明**配对图像差异并不小**；CLIP 
 * **正面**：闭集身份识别在 clean/rot45/rot75 上都是 1.000，是「旋转下几乎无损失」的完整性证据；
 * **负面**：换成**未注册 key** 这个更难的负样本后，存在性阈值下 FPR 高达 0.30–0.70 —— 
   与 §3 的错密钥结论同源，**身份表必须用未注册 key 标定阈值**；
-* 口径：ours 的身份 = payload 精确匹配，因此 **Id-Acc 本质等于 PMR**，不是独立能力；
+* 口径：**Id-Acc ≠ PMR**。PMR 衡量整条 payload 是否逐位正确；Id-Acc 衡量「已注册候选
+  中 top-1 身份是否正确」。8 bit 里错 1 位时 PMR = 0，但若错位后的邻居码字没有被注册，
+  Id-Acc 仍可为 1。两者**判定规则不同**，不能互相换算；
   payload 码字空间 256（=2^8，**不是密码学 key 空间**）与注册量 20 是两个不同的数（详见 `P0_identity_report.md`）。
 
 ## 6. 草稿需要修正的表述（按重要性）

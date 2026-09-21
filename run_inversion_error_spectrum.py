@@ -58,7 +58,8 @@ from tqdm import tqdm
 
 from paper_protocol import AttackCtx, apply_case, case_seed
 from p0_common import (OursCore, ResumeLog, align_error, bits_from_rng,
-                       case_rotation_angle, config_hash, make_config,
+                       case_rotation_angle, config_hash, design_bytes_hash,
+                       make_config,
                        provenance, resolve_device, safe_print, search_grid,
                        write_json)
 
@@ -173,7 +174,7 @@ def main() -> None:
     run_meta = {
         "script": "run_inversion_error_spectrum.py",
         "design": args.design,
-        "design_hash": config_hash({"design": args.design}),
+        "design_hash": design_bytes_hash(args.design),
         "n_bits": core.n_bits,
         "cases": cases,
         "N": args.N,

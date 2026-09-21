@@ -35,6 +35,9 @@ N_OPS="${N_OPS:-15}"
 N_SPECTRUM="${N_SPECTRUM:-25}"
 N_PARETO="${N_PARETO:-50}"
 N_QUALITY="${N_QUALITY:-200}"
+N_PADDING="${N_PADDING:-25}"
+N_VISUAL="${N_VISUAL:-4}"
+ETAS_VISUAL="${ETAS_VISUAL:-0,5e3,1e4,2e4}"
 CALIB_OFFSET="${CALIB_OFFSET:-0}"
 TEST_OFFSET="${TEST_OFFSET:-500}"
 
@@ -103,8 +106,29 @@ stage_operators() {
       --angles "37.3,58.7,102.5,-30" \
       --attack_ops "$OPS_ATTACK" \
       --decode_ops "tv_nearest_c31.5,tv_bilinear_c31.5,tv_bicubic_c31.5,tv_bilinear_c32" \
-      --grid_step 2 --out_dir "${OPS_OUT:-runs/p0_operators}"
+      --grid_step 2 --out_dir "${OPS_OUT:-runs/p0_operators_v2}"
   date > logs/p0_operators_done.txt
+}
+
+# The clean padding ablation: three matched pairs, nothing else.  Fresh out_dir
+# on purpose -- the legacy runs/p0_operators has no fingerprint sidecar, and
+# ResumeLog now refuses (rightly) to stamp a new configuration onto it.
+stage_padding() {
+  run run_unseen_operators.py --design "$DESIGN_B8" --N "$N_PADDING" \
+      --angles "37.3,58.7,102.5,-30" \
+      --attack_ops "cv2_linear_constant,cv2_linear_reflect,cv2_cubic_constant,cv2_cubic_reflect,cv2_nearest_constant,cv2_nearest_reflect" \
+      --decode_ops "tv_nearest_c31.5" \
+      --grid_step 2 --out_dir runs/p0_padding
+  date > logs/p0_padding_done.txt
+}
+
+# Paired visual quality: same prompt + same latent, no watermark vs several eta,
+# with amplified difference maps (real images for human inspection).
+stage_visual() {
+  run run_visual_quality.py --design "$DESIGN_B8" --N "$N_VISUAL" \
+      --etas "$ETAS_VISUAL" --lpips \
+      --out_dir runs/visual_quality --report_path results/visual_quality.md
+  date > logs/p0_visual_done.txt
 }
 
 stage_spectrum() {
@@ -129,12 +153,16 @@ case "${1:-all}" in
   controls)  stage_controls ;;
   rotation)  stage_rotation ;;
   operators) stage_operators ;;
+  padding)   stage_padding ;;
+  visual)    stage_visual ;;
   spectrum)  stage_spectrum ;;
   pareto)    stage_pareto ;;
   all)
     stage_controls
     stage_rotation
     stage_operators
+    stage_padding
+    stage_visual
     stage_spectrum
     stage_pareto
     ;;
