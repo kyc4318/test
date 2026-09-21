@@ -645,12 +645,21 @@ def load_rows(path: str) -> List[Dict]:
 def make_config(args, device: str):
     from configs import SectorConfig
 
+    # fp16 is the right choice on CUDA, but several ops (LayerNorm, some VAE
+    # paths) are unsupported or pathologically slow in fp16 on CPU, and
+    # ``pipe.to("cpu")`` with fp16 weights raises at the first attention block.
+    # So pick the dtype from the actual device instead of inheriting the CUDA
+    # default -- this is what lets the same scripts run in AutoDL's no-GPU mode.
+    import torch
+
+    dtype = torch.float32 if str(device).startswith("cpu") else torch.float16
     return SectorConfig(
         model_id=args.model_id,
         dataset=args.dataset,
         num_inference_steps=args.steps,
         test_num_inference_steps=args.steps,
         device=device,
+        dtype=dtype,
     )
 
 
