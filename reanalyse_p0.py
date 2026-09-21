@@ -34,9 +34,9 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from p0_common import (align_error, align_error360, clustered_rate_ci,
-                       clustered_stat_ci, load_rows, provenance, safe_print,
-                       wilson, write_json)
+from p0_common import (align_error, align_error360, case_rotation_angle,
+                       clustered_rate_ci, clustered_stat_ci, load_rows,
+                       provenance, safe_print, wilson, write_json)
 
 #: rows files to look for, and the columns that define a "cell" to group on
 STAGES = {
@@ -198,6 +198,52 @@ def leak_table(rows: List[Dict], tol: float) -> Dict[str, Dict]:
     return res
 
 
+def analyse_main_table(path: str, tol: float) -> Optional[Dict]:
+    """Re-score the unified-comparison run (``runs/paper_*/ours.json``).
+
+    That file stores one row per (image, case) with ``wm_est_angle``, ``case``
+    and the per-image ``theta``; the angle actually applied is
+    ``case_rotation_angle(case, theta)``.  This is the flagship synchronization
+    evidence (search on vs off), so it is worth checking on the full circle too.
+    """
+    with open(path, encoding="utf-8") as f:
+        blob = json.load(f)
+    rows = blob.get("rows") or []
+    pseudo = []
+    for r in rows:
+        if "wm_est_angle" not in r or "case" not in r:
+            continue
+        pseudo.append({
+            "image_id": r.get("index", len(pseudo)),
+            "case": r["case"],
+            "true_angle": float(case_rotation_angle(r["case"],
+                                                    float(r.get("theta", 0.0)))),
+            "est_angle": float(r["wm_est_angle"]),
+            "bit_acc": r.get("wm_bit_acc"),
+            "perfect": r.get("wm_perfect"),
+        })
+    if not pseudo:
+        return None
+    buckets: Dict[str, List[Dict]] = {}
+    for r in pseudo:
+        buckets.setdefault(f"case={r['case']}", []).append(r)
+    return {"overall": analyse(pseudo, tol),
+            "cells": {k: analyse(v, tol) for k, v in sorted(buckets.items())}}
+
+
+def resolve_path(arg: str, runs_dir: str) -> Optional[str]:
+    """Resolve a rows path given as-is, relative to runs_dir, or to its parent."""
+    cands = [arg] if os.path.isabs(arg) else [
+        arg,
+        os.path.join(runs_dir, arg),
+        os.path.join(os.path.dirname(os.path.abspath(runs_dir)), arg),
+    ]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs_dir", default="runs")
@@ -208,6 +254,10 @@ def main() -> None:
                     help="rows file whose null/wrong-key conditions are used for "
                          "the angle-lock (padding) test; resolved as given, then "
                          "relative to --runs_dir, then relative to its parent")
+    ap.add_argument("--main_table_runs",
+                    default="paper_ours/ours.json",
+                    help="comma list of unified-comparison runs (runs/<x>/ours.json) "
+                         "to re-score; resolved like --leak_rows")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -307,19 +357,9 @@ def main() -> None:
 
     # ---- angle-leak / padding test --------------------------------------
     leak = None
-    leak_path = None
-    candidates = [args.leak_rows] if os.path.isabs(args.leak_rows) else [
-        args.leak_rows,
-        os.path.join(args.runs_dir, args.leak_rows),
-        os.path.join(os.path.dirname(os.path.abspath(args.runs_dir)),
-                     args.leak_rows),
-    ]
-    for cand in candidates:
-        if os.path.exists(cand):
-            leak_path = cand
-            break
+    leak_path = resolve_path(args.leak_rows, args.runs_dir)
     if leak_path is None:
-        safe_print(f"[warn] leak rows not found; tried {candidates}")
+        safe_print(f"[warn] leak rows not found: {args.leak_rows}")
     else:
         safe_print(f"[ok] leak test on {leak_path}")
         leak = leak_table(load_rows(leak_path), args.sync_tol)
@@ -344,6 +384,40 @@ def main() -> None:
                   "其 null 锁定率只是「估计角碰巧落在 0° 附近」的比例，"
                   "**不构成泄漏证据**；有意义的只有真正施加了旋转的格"
                   "（`rot45` / `rot75` / `rot+noise0.05`）。", ""]
+
+    # ---- flagship main-table runs ---------------------------------------
+    main_results = []
+    for spec in [s for s in args.main_table_runs.split(",") if s]:
+        p = resolve_path(spec, args.runs_dir)
+        if p is None:
+            safe_print(f"[warn] main-table run not found: {spec}")
+            continue
+        res = analyse_main_table(p, args.sync_tol)
+        if res:
+            safe_print(f"[ok] main table: {p}")
+            main_results.append((os.path.basename(os.path.dirname(p)), res))
+    if main_results:
+        lines += ["", "---", "",
+                  "## 附：主对比表（同步开关消融）的 mod-360 复核", "",
+                  "主表最常被引用的那组证据（同载波、同攻击，只切换解码端是否做角度搜索）"
+                  "同样用 mod-360 与 mod-180 分别复核。", ""]
+        for tag, data in main_results:
+            o = data["overall"]
+            lines += [f"### `{tag}`（{o['n']} 条记录 / {o['n_images']} 张图）", "",
+                      "**改判 "
+                      f"{o['rows_flipped_to_fail']} 条**，其中对径锁定 "
+                      f"**{o['n_antipodal']}** 条。", "",
+                      "| case | n | 失锁 mod180 | 失锁 **mod360** | 角误差360 中位/p90 | 聚类 CI (mod360) |",
+                      "|---|---:|---:|---:|---|---|"]
+            for k, c in data["cells"].items():
+                if not c:
+                    continue
+                lines.append(f"| `{k.split('=', 1)[1]}` | {c['n']} | "
+                             f"{c['fail180_k']} ({c['fail180_rate']:.3f}) | "
+                             f"{c['fail360_k']} ({c['fail360_rate']:.3f}) | "
+                             f"{c['err360_median']:.2f} / {c['err360_p90']:.2f} | "
+                             f"{_clus(c['fail360_clustered'])} |")
+            lines.append("")
 
     lines += ["## 产物", "",
               f"* 逐阶段 JSON：`{args.out_dir}/mod360_summary.json`",
