@@ -70,6 +70,14 @@ def safe_print(text: str) -> None:
         buf.write(text.encode("utf-8", "replace") + b"\n")
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean escape hatch from the environment (``1/true/yes``)."""
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
 # --------------------------------------------------------------------------- #
 # angles
 # --------------------------------------------------------------------------- #
@@ -232,30 +240,85 @@ def clustered_rate_ci(flags: Sequence[float], groups: Sequence,
     that is only replicated across ~30 images understates the uncertainty by
     roughly the square root of the records-per-image ratio.
 
-    Degenerate case: when *no* cluster (or every cluster) contains an event,
-    every bootstrap replicate is identical and the interval collapses to a
-    point -- which reads as "zero failures, zero uncertainty".  In that case the
-    reported interval falls back to a Wilson interval at the **cluster** level
-    (number of clusters containing at least one event out of the number of
-    clusters), which is conservative but informative.  ``ci_degenerate`` and
-    ``wilson_on_clusters`` are recorded so a reader can tell which happened.
+    **Two different estimands are reported separately, and must stay separate:**
+
+    ``rate_record`` / ``ci_record``
+        the share of *records* with an event, and its cluster-bootstrap
+        interval.  This is what the tables quote as "failure rate".
+    ``rate_image`` / ``ci_image``
+        the share of *images* with at least one event, and its Wilson interval.
+        This is the quantity people usually mean by "how many images failed",
+        and it is a *different number*.
+
+    .. warning::
+       An earlier revision substituted ``ci_image`` into ``ci`` whenever the
+       bootstrap degenerated (no cluster, or every cluster, containing an
+       event).  That printed an interval for one estimand next to the point
+       estimate of the other: e.g. 200/300 = 0.667 records failing, shown as
+       ``0.667 [0.963, 1.000]``, where `[0.963, 1.000]` is in fact
+       ``100/100`` **images** with >=1 failure.  The two are now separate fields;
+       ``ci`` is always the record-level interval and ``ci_degenerate`` flags
+       when that interval is a single point (so it should not be quoted as if it
+       expressed uncertainty).
     """
     arr = (np.asarray(list(flags), dtype=np.float64) > 0.5).astype(np.float64)
     if arr.size == 0:
         return None
     res = clustered_stat_ci(arr, groups, stat=np.mean, n_boot=n_boot,
                             seed=seed, alpha=alpha)
-    res["k"] = int(arr.sum())
     clusters = _cluster_groups(groups)
     per_cluster = np.asarray([1.0 if arr[idx].max() > 0 else 0.0
                               for idx in clusters], dtype=np.float64)
     kc, nc = int(per_cluster.sum()), len(clusters)
-    _, lo_c, hi_c = wilson(kc, nc)
-    res["clusters_with_event"] = kc
-    res["wilson_on_clusters"] = [lo_c, hi_c]
+    p_img, lo_i, hi_i = wilson(kc, nc)
+    out = {
+        # record-level estimand (what the tables quote)
+        "rate_record": float(arr.mean()),
+        "k": int(arr.sum()),
+        "n": int(arr.size),
+        "ci_record": list(res["ci"]),
+        "ci_record_degenerate": bool(res["ci"][0] == res["ci"][1]),
+        # image-level estimand (separate, in case someone wants it)
+        "rate_image": float(p_img),
+        "ci_image": [float(lo_i), float(hi_i)],
+        "n_images_with_event": int(kc),
+        "n_clusters": int(nc),
+    }
+    # backward-compatible aliases: mean/ci always refer to the RECORD estimate
+    out["mean"] = out["rate_record"]
+    out["ci"] = out["ci_record"]
+    out["ci_degenerate"] = out["ci_record_degenerate"]
+    out["clusters_with_event"] = out["n_images_with_event"]
+    return out
+
+
+def clustered_paired_diff(a: Sequence[float], b: Sequence[float],
+                          groups: Sequence, n_boot: int = 2000,
+                          seed: int = 0, alpha: float = 0.05) -> Dict:
+    """Paired difference ``mean(a - b)`` with an image-level cluster bootstrap.
+
+    ``a`` and ``b`` must be aligned record by record (same image, same attack,
+    same angle) -- the callers build them from a matched key.  Resampling is over
+    clusters, so a drawn image contributes *all* of its paired records at once,
+    which is what makes the interval valid for a paired comparison such as
+    "operator B vs the reference operator" or "B=16 vs B=8".
+
+    ``n_discordant`` counts the records where the two disagree, which is what a
+    paired (McNemar-style) reading of a 0/1 difference depends on.
+    """
+    x = np.asarray(list(a), dtype=np.float64)
+    y = np.asarray(list(b), dtype=np.float64)
+    n = min(x.size, y.size)
+    if n == 0:
+        return None
+    d = x[:n] - y[:n]
+    res = clustered_stat_ci(d, list(groups)[:n], stat=np.mean, n_boot=n_boot,
+                            seed=seed, alpha=alpha)
+    if res is None:
+        return None
+    res["n_pairs"] = int(n)
+    res["n_discordant"] = int((np.abs(d) > 1e-12).sum())
     res["ci_degenerate"] = bool(res["ci"][0] == res["ci"][1])
-    if res["ci_degenerate"]:
-        res["ci"] = [lo_c, hi_c]
     return res
 
 
@@ -394,11 +457,14 @@ class ResumeLog:
                      "runtime_sec")
 
     def __init__(self, path: str, keys: Sequence[str] = ("uid",),
-                 fingerprint: Optional[Dict] = None):
+                 fingerprint: Optional[Dict] = None,
+                 adopt_legacy: Optional[bool] = None):
         self.path = path
         self.keys = tuple(keys)
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        self._guard_fingerprint(path, fingerprint)
+        if adopt_legacy is None:
+            adopt_legacy = _env_flag("P0_ADOPT_LEGACY_RUN")
+        self._guard_fingerprint(path, fingerprint, adopt_legacy=adopt_legacy)
         self.done = set()
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
@@ -424,8 +490,22 @@ class ResumeLog:
         return obj
 
     @classmethod
-    def _guard_fingerprint(cls, path: str, fingerprint: Optional[Dict]) -> None:
-        """Fail loudly when resuming a run with a different configuration."""
+    def _guard_fingerprint(cls, path: str, fingerprint: Optional[Dict],
+                           adopt_legacy: bool = False) -> None:
+        """Fail loudly when resuming a run whose configuration is not proven equal.
+
+        Three cases, in order of how much is known:
+
+        sidecar matches        -> resume (the configuration is proven identical)
+        sidecar differs        -> refuse; the rows came from other parameters
+        rows but no sidecar    -> refuse too: the rows were written before the
+                                  guard existed, so nothing proves they came from
+                                  this configuration.  Adopting them silently and
+                                  stamping the *current* fingerprint on them is
+                                  exactly how a stale run contaminates a fresh
+                                  one, so it requires ``adopt_legacy=True``
+                                  (``--adopt_legacy_run``).
+        """
         if fingerprint is None:
             return
         side = path + ".fingerprint.json"
@@ -439,11 +519,21 @@ class ResumeLog:
             except Exception:
                 prev = None
         if prev is None and has_rows:
+            if not adopt_legacy:
+                raise SystemExit(
+                    "[ResumeLog] refusing to adopt legacy rows:\n"
+                    f"  rows: {path}\n"
+                    "The file already contains rows but has no fingerprint "
+                    "sidecar, so there is no proof that they were produced by "
+                    "this configuration. Resuming would keep those rows and "
+                    "stamp them with the current fingerprint.\n"
+                    "  - use a fresh --out_dir, or\n"
+                    "  - pass --adopt_legacy_run if you have verified by hand "
+                    "that the existing rows use the same parameters.")
             safe_print(
-                f"[ResumeLog] WARNING: {path} already contains rows but has no "
-                f"fingerprint sidecar, so the configuration cannot be verified. "
-                f"Use a fresh --out_dir if the existing rows may come from "
-                f"different parameters.")
+                f"[ResumeLog] WARNING: adopting legacy rows at {path} without a "
+                f"fingerprint sidecar (--adopt_legacy_run). The configuration is "
+                f"NOT verified.")
         elif prev is not None and prev != cur:
             raise SystemExit(
                 "[ResumeLog] refusing to resume:\n"

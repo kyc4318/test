@@ -35,8 +35,9 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from p0_common import (align_error, align_error360, case_rotation_angle,
-                       clustered_rate_ci, clustered_stat_ci, load_rows,
-                       provenance, safe_print, wilson, write_json)
+                       clustered_paired_diff, clustered_rate_ci,
+                       clustered_stat_ci, load_rows, provenance, safe_print,
+                       wilson, write_json)
 
 #: rows files to look for, and the columns that define a "cell" to group on
 STAGES = {
@@ -101,6 +102,164 @@ def _clus(d: Optional[Dict], label: str = "图有失锁") -> str:
     if "clusters_with_event" in d:
         txt += f" ({d['clusters_with_event']}/{d['n_clusters']} {label})"
     return txt
+
+
+def _rate_cols(d: Optional[Dict]) -> tuple:
+    """Two columns for a rate: the record-level and the image-level estimand.
+
+    They are *different quantities* and must never share a cell (a point estimate
+    for one with the interval of the other is meaningless).  ``†`` marks a
+    record-level cluster bootstrap that degenerated to a point.
+    """
+    if not d:
+        return "--", "--"
+    rec = (f"{d['rate_record']:.4f} "
+           f"[{d['ci_record'][0]:.4f}, {d['ci_record'][1]:.4f}]")
+    if d.get("ci_record_degenerate"):
+        rec += "†"
+    img = (f"{d['n_images_with_event']}/{d['n_clusters']} "
+           f"= {d['rate_image']:.4f} "
+           f"[{d['ci_image'][0]:.4f}, {d['ci_image'][1]:.4f}]")
+    return rec, img
+
+
+def _pair_keys(rows: List[Dict], extra: Sequence[str] = ()) -> Dict:
+    """Index rows by the key that identifies a paired replicate."""
+    out = {}
+    for r in rows:
+        k = (str(r.get("image_id")),
+             f"{float(r.get('true_angle', 0.0)):.6f}",
+             f"{r.get('sigma', '')}") + tuple(str(r.get(c, "")) for c in extra)
+        out[k] = r
+    return out
+
+
+def _pci(d: Optional[Dict]) -> str:
+    """Format a paired difference with its clustered interval.
+
+    ``†`` marks a degenerate interval (every pair identical, so the bootstrap
+    returns a point): that is "no evidence of a difference", not "proven equal".
+    """
+    if not d:
+        return "--"
+    txt = f"{d['mean']:+.4f} [{d['ci'][0]:+.4f}, {d['ci'][1]:+.4f}]"
+    if d.get("ci_degenerate"):
+        txt += "†"
+    return txt
+
+
+def _row_flags(r: Dict, tol: float):
+    """(bit_acc, fail360) for one row, or None when it is not re-scorable."""
+    if "est_angle" not in r or "true_angle" not in r:
+        return None
+    fail = float(align_error360(float(r["est_angle"]),
+                               float(r["true_angle"])) > tol)
+    ba = r.get("bit_acc")
+    return (float(ba) if ba is not None else float("nan"), fail)
+
+
+def paired_vs_reference(rows: List[Dict], tol: float, cell_cols=("attack_op",
+                                                                 "decode_op"),
+                        ref: Optional[tuple] = None) -> List[Dict]:
+    """Paired difference of every cell against the reference cell.
+
+    Records are paired on (image, true angle, sigma, *cell_cols* other than the
+    varied ones) -- i.e. the same image under the same attack and angle, decoded
+    two ways -- and the difference is bootstrapped over images.  Two intervals
+    overlapping is *not* a test; a paired interval is.
+    """
+    cells = sorted({tuple(str(r.get(c, "")) for c in cell_cols) for r in rows})
+    if not cells:
+        return []
+    if ref is None:
+        ref = cells[0]
+    index = {}
+    for r in rows:
+        fl = _row_flags(r, tol)
+        if fl is None:
+            continue
+        index.setdefault(tuple(str(r.get(c, "")) for c in cell_cols), {})
+        key = _pair_keys([r])
+        index[tuple(str(r.get(c, "")) for c in cell_cols)].update(key)
+    if ref not in index:
+        return []
+    out = []
+    for cell in cells:
+        if cell == ref or cell not in index:
+            continue
+        common = sorted(set(index[ref]) & set(index[cell]))
+        if not common:
+            continue
+        groups = [k[0] for k in common]
+        cell_flags = np.asarray([_row_flags(index[cell][k], tol) for k in
+                                 common], dtype=np.float64)
+        ref_flags = np.asarray([_row_flags(index[ref][k], tol) for k in
+                                common], dtype=np.float64)
+        zeros = np.zeros(len(common), dtype=np.float64)
+        out.append({
+            "cell": "|".join(cell), "ref": "|".join(ref),
+            "n_pairs": len(common),
+            "bitacc_cell": float(cell_flags[:, 0].mean()),
+            "bitacc_ref": float(ref_flags[:, 0].mean()),
+            "fail_cell": float(cell_flags[:, 1].mean()),
+            "fail_ref": float(ref_flags[:, 1].mean()),
+            "d_bitacc": clustered_paired_diff(cell_flags[:, 0],
+                                              ref_flags[:, 0], groups),
+            "d_fail": clustered_paired_diff(cell_flags[:, 1],
+                                            ref_flags[:, 1], groups),
+        })
+    return out
+
+
+def paired_b8_vs_b16(rows: List[Dict], tol: float) -> List[Dict]:
+    """Paired B=16 minus B=8 comparison inside the capacity/energy Pareto run.
+
+    The run reuses the same image / eta / attack across designs, so the pair key
+    is (eta, case, image).  PMR is reported next to BitAcc because PMR is
+    inherently stricter at B=16 (``p^16`` vs ``p^8``) and therefore cannot on its
+    own support a claim about synchronization or per-bit reliability.
+    """
+    out = []
+    etas = sorted({str(r.get("eta", "")) for r in rows})
+    cases = sorted({str(r.get("case", "")) for r in rows})
+    for eta in etas:
+        for case in cases:
+            sub = [r for r in rows
+                   if str(r.get("eta", "")) == eta and str(r.get("case", "")) == case]
+            by_bits = {}
+            for r in sub:
+                fl = _row_flags(r, tol)
+                if fl is None:
+                    continue
+                b = int(r.get("n_bits", 0))
+                by_bits.setdefault(b, {})[
+                    str(r.get("image_id"))] = (fl[0], fl[1], r.get("perfect"))
+            if 8 not in by_bits or 16 not in by_bits:
+                continue
+            common = sorted(set(by_bits[8]) & set(by_bits[16]))
+            if not common:
+                continue
+            ba16 = np.asarray([by_bits[16][k][0] for k in common])
+            ba8 = np.asarray([by_bits[8][k][0] for k in common])
+            fl16 = np.asarray([by_bits[16][k][1] for k in common])
+            fl8 = np.asarray([by_bits[8][k][1] for k in common])
+            pm16 = np.asarray([float(by_bits[16][k][2] or 0) for k in common])
+            pm8 = np.asarray([float(by_bits[8][k][2] or 0) for k in common])
+            out.append({
+                "eta": eta, "case": case, "n_pairs": len(common),
+                "bitacc_8": float(ba8.mean()), "bitacc_16": float(ba16.mean()),
+                "pmr_8": float(pm8.mean()), "pmr_16": float(pm16.mean()),
+                "fail_8": float(fl8.mean()), "fail_16": float(fl16.mean()),
+                # BER is just 1 - BitAcc; quoted explicitly because PMR is
+                # inherently stricter at B=16 (p^16 vs p^8) and must not carry a
+                # capacity claim on its own.
+                "ber_8": float(1.0 - ba8.mean()),
+                "ber_16": float(1.0 - ba16.mean()),
+                "d_bitacc": clustered_paired_diff(ba16, ba8, common),
+                "d_fail": clustered_paired_diff(fl16, fl8, common),
+                "d_pmr": clustered_paired_diff(pm16, pm8, common),
+            })
+    return out
 
 
 def analyse(rows: List[Dict], tol: float) -> Optional[Dict]:
@@ -318,16 +477,19 @@ def main() -> None:
                 continue
             lines += [f"### `{tag}`", "",
                       f"记录 {o['n']} 条，来自 **{o['n_images']} 张图**。", "",
-                      "| 口径 | 失锁数 | 失锁率 | 95%CI | 区间类型 |",
-                      "|---|---:|---:|---|---|",
-                      f"| mod180 | {o['fail180_k']} | {o['fail180_rate']:.4f} | "
-                      f"[{o['fail180_wilson'][0]:.4f}, {o['fail180_wilson'][1]:.4f}] | 逐行 |",
-                      f"| mod180 | {o['fail180_k']} | {o['fail180_rate']:.4f} | "
-                      f"{_clus(o['fail180_clustered'])} | **按图像聚类** |",
-                      f"| **mod360** | {o['fail360_k']} | {o['fail360_rate']:.4f} | "
-                      f"[{o['fail360_wilson'][0]:.4f}, {o['fail360_wilson'][1]:.4f}] | 逐行 |",
-                      f"| **mod360** | {o['fail360_k']} | {o['fail360_rate']:.4f} | "
-                      f"{_clus(o['fail360_clustered'])} | **按图像聚类** |", ""]
+                      "两个**互不相同的统计量**分列（不可混用）：记录级 = 失败的"
+                      "条件数 / 全部条件数；图像级 = 至少失败一次的图像数 / 图像数。", "",
+                      "| 口径 | 记录级失锁率 [95%CI，按图像聚类] | "
+                      "**图像级**失锁（≥1 次失败）[Wilson 95%CI] |",
+                      "|---|---|---|"]
+            for tagi, key in (("mod180", "fail180"), ("**mod360**", "fail360")):
+                rec, img = _rate_cols(o[f"{key}_clustered"])
+                lines.append(f"| {tagi} | {rec} | {img} |")
+            lines += ["",
+                      f"逐行（记录级、非聚类）区间仅作对照：mod180 "
+                      f"[{o['fail180_wilson'][0]:.4f}, {o['fail180_wilson'][1]:.4f}]、"
+                      f"mod360 [{o['fail360_wilson'][0]:.4f}, "
+                      f"{o['fail360_wilson'][1]:.4f}]。", ""]
             lines += [f"改判：{o['rows_flipped_to_fail']} 条从 mod180 的「成功」"
                       f"改为 mod360 的「失败」；其中真正的对径锁定 "
                       f"（err180 ≤ tol 且 err360 > 90°）有 **{o['n_antipodal']}** 条。",
@@ -345,15 +507,85 @@ def main() -> None:
             cells = {k: v for k, v in data["cells"].items() if v}
             if len(cells) > 1:
                 lines += ["| cell | n | n_img | 失锁率 mod180(逐行) | "
-                          "失锁率 mod360(逐行) | 失锁率 mod360(聚类 CI) | 改判 | 对径 |",
-                          "|---|---:|---:|---:|---:|---|---:|---:|"]
+                          "失锁率 mod360(逐行) | mod360 记录级 [聚类 CI] | "
+                          "mod360 图像级 | 改判 | 对径 |",
+                          "|---|---:|---:|---:|---:|---|---:|---:|---:|"]
                 for k, c in cells.items():
+                    rec, img = _rate_cols(c["fail360_clustered"])
                     lines.append(
                         f"| `{k}` | {c['n']} | {c['n_images']} | "
                         f"{c['fail180_rate']:.4f} | {c['fail360_rate']:.4f} | "
-                        f"{c['fail360_rate']:.4f} {_clus(c['fail360_clustered'])} | "
+                        f"{rec} | {img} | "
                         f"{c['rows_flipped_to_fail']} | {c['n_antipodal']} |")
                 lines.append("")
+
+    # ---- paired operator comparison -------------------------------------
+    ops_files = sorted(glob.glob(os.path.join(args.runs_dir,
+                                              "p0_operators/*/rows.jsonl")))
+    if ops_files:
+        ops_rows = []
+        for p in ops_files:
+            ops_rows.extend(load_rows(p))
+        paired = paired_vs_reference(ops_rows, args.sync_tol,
+                                     ref=("pil_bilinear", "tv_nearest_c31.5"))
+        if paired:
+            safe_print(f"[ok] paired operator comparison: {len(paired)} cells")
+            lines += ["", "---", "",
+                      "## 附：operator 的配对差（相对参考格 `pil_bilinear` × "
+                      "`tv_nearest_c31.5`）", "",
+                      "两个 Wilson 区间重叠**不是**差异检验。这里每一对都是**同一张图、"
+                      "同一个角度、同一次反演**下的两种实现，因此给出**配对差**"
+                      "及其按图像聚类的 bootstrap 区间（配对差 = cell − 参考格；"
+                      "Δ失锁率为正则表示该 cell 更差）。", "",
+                      "| cell | n_pairs | BitAcc cell→ref | ΔBitAcc [聚类CI] | "
+                      "失锁率 cell→ref | Δ失锁率 [聚类CI] | 不一致对数 |",
+                      "|---|---:|---|---|---|---|---:|"]
+            for e in paired:
+                db, df = e["d_bitacc"], e["d_fail"]
+                lines.append(
+                    f"| `{e['cell']}` | {e['n_pairs']} | "
+                    f"{e['bitacc_cell']:.4f} → {e['bitacc_ref']:.4f} | "
+                    f"{_pci(db)} | "
+                    f"{e['fail_cell']:.4f} → {e['fail_ref']:.4f} | "
+                    f"{_pci(df)} | "
+                    f"{df['n_discordant']} |")
+            lines += ["", "读法：Δ 的聚类区间**不含 0** 才说明该 cell 与参考格有"
+                      "可分辨差异；区间跨 0 时应写成「未观察到差异」，"
+                      "而不是「两者相同」。`†` = 所有配对完全相同，区间退化为一点，"
+                      "同样只能读作「无差异证据」。", ""]
+
+    # ---- paired B8 vs B16 ----------------------------------------------
+    pareto_file = resolve_path("pareto/rows.jsonl", args.runs_dir)
+    if pareto_file:
+        pr = paired_b8_vs_b16(load_rows(pareto_file), args.sync_tol)
+        if pr:
+            safe_print(f"[ok] paired B8 vs B16 comparison: {len(pr)} cells")
+            lines += ["", "---", "",
+                      "## 附：B8 vs B16 的配对差（同图/同 η/同攻击）", "",
+                      "**PMR 不能单独支撑「容量增加削弱同步」的结论**：若单比特"
+                      "正确率同为 p，理想独立近似下 PMR(B8)≈p⁸、PMR(B16)≈p¹⁶，"
+                      "消息翻倍本身就会压低全对率。因此这里同时给 BitAcc（以及"
+                      "BER）、失锁率与 PMR，并给**配对差**（B16 − B8）与"
+                      "按图像聚类的区间。", "",
+                      "| η | case | n_pairs | BitAcc 8→16 | ΔBitAcc [聚类CI] | "
+                      "BER 8→16 | 失锁率 8→16 | Δ失锁率 [聚类CI] | "
+                      "PMR 8→16 | ΔPMR [聚类CI] |",
+                      "|---:|---|---:|---|---|---|---|---|---|---|"]
+            for e in pr:
+                db, df, dp = e["d_bitacc"], e["d_fail"], e["d_pmr"]
+                lines.append(
+                    f"| {float(e['eta']):g} | `{e['case']}` | {e['n_pairs']} | "
+                    f"{e['bitacc_8']:.4f} → {e['bitacc_16']:.4f} | "
+                    f"{_pci(db)} | "
+                    f"{e['ber_8']:.4f} → {e['ber_16']:.4f} | "
+                    f"{e['fail_8']:.4f} → {e['fail_16']:.4f} | "
+                    f"{_pci(df)} | "
+                    f"{e['pmr_8']:.3f} → {e['pmr_16']:.3f} | "
+                    f"{_pci(dp)} |")
+            lines += ["", "判读：只有在 **ΔBitAcc 与 Δ失锁率的聚类区间都不含 0** "
+                      "（即单比特可靠性与同步本身都退化）时，才能说容量增加"
+                      "确实损害了同步/逐比特恢复；若只有 ΔPMR 显著，"
+                      "那更可能是 p^B 的固有惩罚。", ""]
 
     # ---- angle-leak / padding test --------------------------------------
     leak = None
@@ -373,12 +605,14 @@ def main() -> None:
                   "说明角度信息来自攻击算子而非载波。这条检验**不依赖任何填充"
                   "算子的几何假设**（它只要求攻击算子对 wm 与 null 一致），"
                   "因此它是「同步是否读黑边」的正面证据。", "",
-                  "| case \\| 条件 | n | n_img | 锁定率 | 聚类 CI | 角误差 中位/p90 |",
-                  "|---|---:|---:|---:|---|---|"]
+                  "锁定率同样分**记录级**与**图像级**两列（含义见上）。", "",
+                  "| case \\| 条件 | n | n_img | 记录级锁定率 [聚类CI] | "
+                  "图像级（≥1 次锁定） | 角误差 中位/p90 |",
+                  "|---|---:|---:|---|---|---|"]
         for key, v in leak.items():
+            rec, img = _rate_cols(v["lock_clustered"])
             lines.append(f"| `{key}` | {v['n']} | {v['n_images']} | "
-                         f"{v['lock_rate']:.4f} | "
-                         f"{_clus(v['lock_clustered'], label='图锁定真角')} | "
+                         f"{rec} | {img} | "
                          f"{v['err_median']:.2f} / {v['err_p90']:.2f} |")
         lines += ["", "注意 `clean` / `jpeg25` 等格的 `true_angle = 0`，"
                   "其 null 锁定率只是「估计角碰巧落在 0° 附近」的比例，"

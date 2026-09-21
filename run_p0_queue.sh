@@ -14,7 +14,11 @@
 #   bash run_p0_queue.sh all        # controls -> rotation -> spectrum -> ...
 #
 # Every stage appends to logs/p0_queue.log and writes logs/p0_<stage>_done.txt.
-set -u
+#
+# ``set -euo pipefail`` plus a ``run`` that returns the Python exit code means a
+# failing stage aborts the queue and does not write its done marker; an earlier
+# version wrote the marker unconditionally, so a failed stage looked finished.
+set -euo pipefail
 
 cd /root/sector_watermark || exit 1
 source /root/miniconda3/etc/profile.d/conda.sh
@@ -39,8 +43,15 @@ COCO_GT=/root/autodl-tmp/data/coco5k/images512
 CORE="clean,jpeg25,noise0.1,blur5,bright6,rot45,rot75,rot+noise0.05"
 
 log() { echo "[$(date '+%m-%d %H:%M:%S')] $*" | tee -a logs/p0_queue.log; }
-run() { log "START $*"; python -u "$@" 2>&1 | tee -a logs/p0_queue.log; \
-        log "END   $* (rc=${PIPESTATUS[0]})"; }
+run() {
+  log "START $*"
+  set +e                      # let us read PIPESTATUS before `set -e` fires
+  python -u "$@" 2>&1 | tee -a logs/p0_queue.log
+  local rc=${PIPESTATUS[0]}
+  set -e
+  log "END   $* (rc=$rc)"
+  return "$rc"
+}
 
 # wrong-key codebooks that actually exist on this machine
 WRONGKEYS=""

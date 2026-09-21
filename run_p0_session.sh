@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Session queue: controls -> rotation -> operators -> spectrum -> pareto.
 #
-# Two deliberate differences from the upstream ``run_p0_queue.sh`` (which is
-# left untouched):
+# Deliberate differences from the upstream ``run_p0_queue.sh``:
 #
 #   * disjoint calib/test splits *inside* this instance's prompt set.
 #     ``/root/autodl-tmp/data/coco5k/meta_data.json`` holds 1000 captions (the
@@ -11,10 +10,19 @@
 #     calib = 0..N-1 and test = 500..500+N-1, both in range and disjoint.
 #   * adds the unseen-rotation-operator stage (``run_unseen_operators.py``),
 #     which the upstream queue does not have.
+#   * the operator stage now runs the **matched padding pairs** (same library,
+#     interpolation, rotation matrix and output size; only the border rule
+#     differs) so that the padding question is answered by a clean causal
+#     ablation rather than by inference.
 #
 # Every stage is resumable: the scripts append to runs/<stage>/rows.jsonl and
 # skip finished (image, attack, condition) triples, so re-running is safe.
-set -u
+#
+# Error handling: ``set -euo pipefail`` plus a ``run`` that *returns* the
+# Python exit code means a failing stage aborts the queue and does NOT write its
+# ``*_done.txt`` marker.  (An earlier version wrote the marker unconditionally,
+# so a failed bar stage looked finished.)
+set -euo pipefail
 
 cd /root/sector_watermark || exit 1
 source /root/miniconda3/etc/profile.d/conda.sh
@@ -34,6 +42,17 @@ DESIGN_B8="results/design_searched_realgeom.npz"
 DESIGN_B16="results/design_B16_s0.npz"
 CORE="clean,jpeg25,noise0.1,blur5,bright6,rot45,rot75,rot+noise0.05"
 
+# Attack operators for the generalisation stage.  The split is deliberate:
+#   * pil_bilinear  -- the operator used by every earlier run (reference cell)
+#   * pil_bicubic   -- a different interpolation kernel, same library
+#   * cv2_{linear,cubic,nearest}_{constant,reflect}
+#                   -- three MATCHED PAIRS: identical library, interpolation,
+#                      rotation matrix and output size; only the border rule
+#                      differs.  constant leaves the zero-filled wedges,
+#                      reflect does not -- this is the clean causal ablation for
+#                      "does the synchronizer read the black wedges?".
+OPS_ATTACK="${OPS_ATTACK:-pil_bilinear,pil_bicubic,cv2_linear_constant,cv2_linear_reflect,cv2_cubic_constant,cv2_cubic_reflect,cv2_nearest_constant,cv2_nearest_reflect}"
+
 WRONGKEYS=""
 for s in 1 2 3; do
   f="results/design_B8_s${s}.npz"
@@ -41,8 +60,17 @@ for s in 1 2 3; do
 done
 
 log() { echo "[$(date '+%m-%d %H:%M:%S')] $*" | tee -a logs/p0_session.log; }
-run() { log "START $*"; python -u "$@" 2>&1 | tee -a logs/p0_session.log; \
-        log "END   $* (rc=${PIPESTATUS[0]})"; }
+run() {
+  log "START $*"
+  # `set -e` would otherwise abort on the pipeline before we can read the exit
+  # code of the python process (PIPESTATUS), so disable it around the call.
+  set +e
+  python -u "$@" 2>&1 | tee -a logs/p0_session.log
+  local rc=${PIPESTATUS[0]}
+  set -e
+  log "END   $* (rc=$rc)"
+  return "$rc"
+}
 
 stage_controls() {
   run run_paper_controls.py --design "$DESIGN_B8" --N "$N_CONTROLS" \
@@ -73,9 +101,9 @@ stage_rotation() {
 stage_operators() {
   run run_unseen_operators.py --design "$DESIGN_B8" --N "$N_OPS" \
       --angles "37.3,58.7,102.5,-30" \
-      --attack_ops "pil_bilinear,pil_bicubic,pil_expand_crop,cv2_linear_reflect,cv2_cubic_constant" \
+      --attack_ops "$OPS_ATTACK" \
       --decode_ops "tv_nearest_c31.5,tv_bilinear_c31.5,tv_bicubic_c31.5,tv_bilinear_c32" \
-      --grid_step 2 --out_dir runs/p0_operators
+      --grid_step 2 --out_dir "${OPS_OUT:-runs/p0_operators}"
   date > logs/p0_operators_done.txt
 }
 

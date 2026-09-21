@@ -87,3 +87,17 @@ It changed a few numbers: the operator stage's DFT-origin decoder cells go from
 scored as synced), rotation sigma=0.1 from 14.81% to 15.19%, one pareto cell from
 0.140 to 0.160. The headline numbers — pure rotation (1230 records, 5 failures)
 and the controls stack (8/800) — are unchanged.
+
+It also adds the statistics that a second review asked for:
+
+* **Paired operator differences** (same image / angle / inversion, 50-60 pairs,
+  image-clustered bootstrap) — 19 cells against the `pil_bilinear x
+  tv_nearest_c31.5` reference. The DFT-origin decoder cells are decisively worse
+  (ΔBitAcc −0.058…−0.135 with failure-rate differences +0.100…+0.250 whose
+  intervals exclude zero); the cross-implementation `cv2_linear_reflect`
+  comparison touches zero (−0.019 [−0.048, +0.000]).
+* **Paired B8-vs-B16 differences** (nine cells) with BitAcc, BER, PMR and the
+  sync-failure rate side by side, because PMR is inherently stricter for a longer
+  message. At the main operating point the Δfailure interval includes zero.
+* Rates are reported as **two separate estimands** (record-level with a cluster
+  bootstrap interval, and image-level with a Wilson interval) and never mixed.

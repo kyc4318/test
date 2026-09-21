@@ -89,7 +89,25 @@ Other verified claims (all with Wilson / bootstrap intervals in `reports/`):
   0.02-0.04** on the rotated cells: unwatermarked images are rotated by the same
   operator, and their estimated angle does not track the true one.
 * **Equal-quality comparison**: at the same PSNR/SSIM/LPIPS/CLIP, the 8-bit design
-  beats the 16-bit design by **+0.30 to +0.58 PMR** under rotation.
+  has a **higher** rotation PMR than the 16-bit design (η=5e3: 0.82 vs 0.24;
+  η=1e4: 0.96 vs 0.58). Read this with the paired statistics below: PMR is
+  inherently stricter for a longer message (`p^16` vs `p^8`), so the PMR gap on
+  its own does **not** show that synchronization degraded. Paired differences
+  (B16 − B8, 50 pairs, image-clustered): at η=5e3 **both** ΔBitAcc and Δfailure
+  are significant (rot45: −0.126 [−0.180, −0.076] and +0.200 [+0.100, +0.320]);
+  at the main operating point η=1e4 the Δfailure interval **includes 0**
+  (+0.080 [−0.040, +0.200]) and only BitAcc/PMR differ. So the honest claim is
+  "the 8-bit design wins on exact-message recovery, and at low energy it also
+  wins on per-bit reliability and synchronization" — not "16 bits breaks
+  synchronization".
+* **Paired operator differences** (same image / angle / inversion, 50-60 pairs,
+  image-clustered bootstrap) replace the weaker "the intervals overlap" reading:
+  `cv2_linear_reflect` (reflect padding, no black wedges) is −0.019
+  [−0.048, +0.000] / −0.031 [−0.088, +0.000] in BitAcc — **touching zero**, i.e.
+  no resolvable degradation; the DFT-origin decoder cells are −0.058…−0.135 with
+  failure-rate differences +0.100…+0.250 whose intervals **exclude** zero. Note
+  that overlapping or degenerate intervals mean "no evidence of a difference",
+  never "proven identical".
 
 ## Repository layout
 
@@ -317,22 +335,43 @@ Read these before quoting anything:
    `cv2_*_constant` vs `cv2_*_reflect` pairs in `run_unseen_operators.py`
    (`PADDING_PAIRS`) instead — same library, interpolation, matrix and output
    size, only the border rule changes.
-   **The padding question does have a positive, assumption-free answer**,
-   computed from the stored rows ([`reports/P0_reanalysis_mod360.md`](reports/P0_reanalysis_mod360.md)):
+   **The padding question has strong, assumption-free counter-evidence**, computed
+   from the stored rows ([`reports/P0_reanalysis_mod360.md`](reports/P0_reanalysis_mod360.md)):
    an unwatermarked image goes through the *identical* operator (same zero-filled
    wedges, same interpolation, same inversion and search) and locks onto the true
    angle only **1% (rot45) / 4% (rot75) / 2% (rot+noise)** of the time, while the
-   watermarked image locks on 100% (100/100 images). If the angle were readable
-   from the attack geometry, the null would lock on too. The matched
-   constant/reflect pair remains worth running as confirmation.
+   watermarked image locks on 100%. If the angle were readable from the attack
+   geometry *alone*, the null would lock on too. What this does **not** exclude is
+   the weaker hypothesis that the border handling *interacts* with the carrier
+   and thereby helps the watermarked case; the matched constant/reflect pair is
+   the clean causal ablation for that — and **that pair has not been measured
+   yet**: the stored operator run contains `cv2_linear_reflect` and
+   `cv2_cubic_constant` but neither `cv2_linear_constant` nor
+   `cv2_cubic_reflect`, so all three matched pairs are incomplete and need one
+   GPU run (they are now in the default `--attack_ops` of `run_p0_session.sh`).
+   What the data *does* contain is a cross-implementation comparison
+   (`cv2_linear_reflect` vs the `pil_bilinear` reference: BitAcc −0.019
+   [−0.048, +0.000] and −0.031 [−0.088, +0.000], i.e. touching zero), which
+   bounds an implementation change but does not isolate the border rule.
+   Set the statement no stronger than: **no observed angle locking driven by
+   attack-operator artifacts alone.**
 8. **Scale / crop are out of scope.** The synchronizer is angular; scaling is a
    radial transform. That is a stated boundary, not an implementation bug.
 9. **Quality numbers are paired, not literature FID.** `reports/paper_pareto.md`
    reports paired PSNR/SSIM/LPIPS/paired-CLIP deltas against the un-watermarked
    generation of the *same* latent. They are not comparable with
    "FID vs MS-COCO real images" numbers from the literature.
-10. **`run_p0_queue.sh` writes its `*_done.txt` marker even when a stage exits
-    non-zero.** Check the `(rc=...)` in the log, not the marker.
+   **Do not describe the main operating point as visually imperceptible.** At
+   B=8, η=1e4 the paired CLIP delta is only −0.0148, but the same cells measure
+   PSNR 12.10 dB, SSIM 0.394 and LPIPS 0.569 — i.e. the paired image difference
+   is *not* small. A nearly unchanged CLIP means the image still matches the
+   prompt semantically; it says nothing about perceptual identity. Absolute
+   imperceptibility has **not** been established and needs paired-image
+   visualisation and a larger-scale evaluation.
+10. **Both P0 queues now abort on a failing stage and only then skip the marker**
+    (`set -euo pipefail`, and `run()` returns the Python exit code). An earlier
+    revision wrote `*_done.txt` unconditionally, so a failed stage looked
+    finished. If you are reading an older log, check `(rc=...)`.
 11. **The synchronization metrics defaulted to mod-180, which this carrier does
     not satisfy.** `p0_common.align_error` assumes a 180-degree flip is an
     equivalent alignment — true only for a *real* Hermitian carrier, which is
@@ -377,6 +416,35 @@ Read these before quoting anything:
     on unwatermarked images. Also note closed-set `Id-Acc` and `PMR` are **not**
     equivalent: a single bit error sets `PMR = 0` while `Id-Acc` can still be 1
     when the flipped-bit neighbour is not registered.
+16. **`256` is a payload codeword space, not a cryptographic key space.** The
+    identity benchmark assigns each test image one payload from the 2^B space
+    (so B=8 addresses at most 256 labels); the secret carrier is the codebook
+    `C` and phase mask `phi`, chosen by the design seed. Calling it the "key
+    space" invites the question "why is your key space only 256?" — use
+    *payload identity space* / *registered payload labels* instead. Treat the
+    identity experiment as an extension, not as a core claim: closed-set
+    identification works, open-set rejection does not (FPR 0.30-0.70).
+17. **A rate has two different estimands; the reports now keep them apart.**
+    `clustered_rate_ci` returns the record-level rate with its cluster bootstrap
+    interval *and* the image-level rate (fraction of images with at least one
+    event) with a Wilson interval. An earlier revision substituted the second
+    interval next to the first point estimate whenever the bootstrap
+    degenerated — printing e.g. `0.667 [0.963, 1.000]`, where `[0.963, 1.000]`
+    describes `100/100` *images* and not the 200/300 *records*. Never quote one
+    estimand's interval beside the other's estimate; `ci_record_degenerate`
+    marks the (honest) case where the record-level interval is a single point.
+18. **`ResumeLog` now refuses to adopt legacy directories.** If `rows.jsonl`
+    exists without a `.fingerprint.json` sidecar, the configuration cannot be
+    proven to match, so the run stops instead of silently stamping the current
+    fingerprint onto older rows. Set `P0_ADOPT_LEGACY_RUN=1` only after
+    verifying by hand that those rows used the same parameters.
+19. **Operator/capacity comparisons use paired differences now.** Same image,
+    same angle, same inversion, two implementations; the difference is
+    bootstrapped over images (`clustered_paired_diff`). Overlapping Wilson
+    intervals are not a test, and a degenerate paired interval (`†`) means "no
+    evidence of a difference", never "proven equal". The B8-vs-B16 table
+    reports BitAcc, BER, PMR and the sync-failure rate together precisely because
+    PMR is inherently stricter for a longer message.
 
 ## Third-party provenance
 
