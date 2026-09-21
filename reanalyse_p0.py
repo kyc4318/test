@@ -91,7 +91,7 @@ def _ci(d: Optional[Dict], key: str = "ci") -> str:
     return f"[{lo:.4f}, {hi:.4f}]"
 
 
-def _clus(d: Optional[Dict]) -> str:
+def _clus(d: Optional[Dict], label: str = "图有失锁") -> str:
     """Format a clustered interval, flagging the degenerate-bootstrap fallback."""
     if not d:
         return "--"
@@ -99,7 +99,7 @@ def _clus(d: Optional[Dict]) -> str:
     if d.get("ci_degenerate"):
         txt += "†"
     if "clusters_with_event" in d:
-        txt += f" ({d['clusters_with_event']}/{d['n_clusters']} 图有失锁)"
+        txt += f" ({d['clusters_with_event']}/{d['n_clusters']} {label})"
     return txt
 
 
@@ -161,12 +161,53 @@ def group_key(row: Dict, cols) -> str:
     return "|".join(parts) if parts else "all"
 
 
+def leak_table(rows: List[Dict], tol: float) -> Dict[str, Dict]:
+    """Angle-lock rate per (case, negative-class).
+
+    For a *watermarked* image the synchronizer is supposed to find the true
+    angle.  For a **null** image (no watermark) rotated by the *same operator*,
+    finding the true angle would mean the angle is readable from the attack
+    itself -- the padding wedges, the interpolation footprint, or the black
+    border -- rather than from the carrier.  So the null lock rate is the
+    padding-independence test that does not depend on any particular fill rule.
+    Wrong-key rows are reported alongside as a second negative class.
+    """
+    out: Dict[str, Dict] = {}
+    for r in rows:
+        if "est_angle" not in r or "true_angle" not in r:
+            continue
+        cond = str(r.get("condition", "?"))
+        cls = "wrongkey" if cond.startswith("wrongkey") else cond
+        key = f"{r.get('case', '?')}|{cls}"
+        out.setdefault(key, []).append(r)
+    res: Dict[str, Dict] = {}
+    for key, sub in sorted(out.items()):
+        groups = [r.get("image_id", i) for i, r in enumerate(sub)]
+        err = np.asarray([align_error360(float(r["est_angle"]),
+                                         float(r["true_angle"])) for r in sub])
+        locked = (err <= tol).astype(np.float64)
+        p, lo, hi = wilson(int(locked.sum()), len(sub))
+        res[key] = {
+            "n": len(sub),
+            "n_images": len({str(g) for g in groups}),
+            "lock_rate": p, "lock_wilson": [lo, hi],
+            "lock_clustered": clustered_rate_ci(locked, groups),
+            "err_median": float(np.median(err)),
+            "err_p90": float(np.percentile(err, 90)),
+        }
+    return res
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs_dir", default="runs")
     ap.add_argument("--out_dir", default="results/reanalysis")
     ap.add_argument("--sync_tol", type=float, default=2.0)
     ap.add_argument("--report_path", default="results/P0_reanalysis_mod360.md")
+    ap.add_argument("--leak_rows", default="p0_controls/step2_N50/rows.jsonl",
+                    help="rows file whose null/wrong-key conditions are used for "
+                         "the angle-lock (padding) test; resolved as given, then "
+                         "relative to --runs_dir, then relative to its parent")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -264,13 +305,53 @@ def main() -> None:
                         f"{c['rows_flipped_to_fail']} | {c['n_antipodal']} |")
                 lines.append("")
 
+    # ---- angle-leak / padding test --------------------------------------
+    leak = None
+    leak_path = None
+    candidates = [args.leak_rows] if os.path.isabs(args.leak_rows) else [
+        args.leak_rows,
+        os.path.join(args.runs_dir, args.leak_rows),
+        os.path.join(os.path.dirname(os.path.abspath(args.runs_dir)),
+                     args.leak_rows),
+    ]
+    for cand in candidates:
+        if os.path.exists(cand):
+            leak_path = cand
+            break
+    if leak_path is None:
+        safe_print(f"[warn] leak rows not found; tried {candidates}")
+    else:
+        safe_print(f"[ok] leak test on {leak_path}")
+        leak = leak_table(load_rows(leak_path), args.sync_tol)
+        lines += ["", "---", "",
+                  "## 附：角度锁定率 —— 「同步是否在读攻击算子本身」的检验", "",
+                  f"数据：`{args.leak_rows}`。对所有条件（水印 / 无水印 / 错密钥）"
+                  f"用**同一 mod360 口径**统计「估计角落在真实角 ±{args.sync_tol:g}° 内」"
+                  "的比例。", "",
+                  "读法：**水印图**应该锁定真实角；**无水印图**被同一个算子（同样的"
+                  "零填充黑楔、同样的插值）旋转，如果它也能锁定真实角，"
+                  "说明角度信息来自攻击算子而非载波。这条检验**不依赖任何填充"
+                  "算子的几何假设**（它只要求攻击算子对 wm 与 null 一致），"
+                  "因此它是「同步是否读黑边」的正面证据。", "",
+                  "| case \\| 条件 | n | n_img | 锁定率 | 聚类 CI | 角误差 中位/p90 |",
+                  "|---|---:|---:|---:|---|---|"]
+        for key, v in leak.items():
+            lines.append(f"| `{key}` | {v['n']} | {v['n_images']} | "
+                         f"{v['lock_rate']:.4f} | "
+                         f"{_clus(v['lock_clustered'], label='图锁定真角')} | "
+                         f"{v['err_median']:.2f} / {v['err_p90']:.2f} |")
+        lines += ["", "注意 `clean` / `jpeg25` 等格的 `true_angle = 0`，"
+                  "其 null 锁定率只是「估计角碰巧落在 0° 附近」的比例，"
+                  "**不构成泄漏证据**；有意义的只有真正施加了旋转的格"
+                  "（`rot45` / `rot75` / `rot+noise0.05`）。", ""]
+
     lines += ["## 产物", "",
               f"* 逐阶段 JSON：`{args.out_dir}/mod360_summary.json`",
               f"* 本报告：`{args.report_path}`", ""]
 
     write_json(os.path.join(args.out_dir, "mod360_summary.json"),
                {"config": vars(args), "provenance": provenance(),
-                "summary": summary})
+                "summary": summary, "leak": leak})
     os.makedirs(os.path.dirname(os.path.abspath(args.report_path)),
                 exist_ok=True)
     with open(args.report_path, "w", encoding="utf-8") as f:

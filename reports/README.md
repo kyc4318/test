@@ -71,3 +71,19 @@ response is in its §10. In short:
 * **Formula alignment**: product fusion is un-normalised at runtime
   (`prod_l S_l`) while the design searches normalise by `S_l(0)`; the annulus has
   **940** write points, not 952.
+
+## Recomputation added on 2026-09-21 (no GPU)
+
+[`P0_reanalysis_mod360.md`](P0_reanalysis_mod360.md) re-scores the stored
+`rows.jsonl` files (8470 records) on the full circle and with image-clustered
+intervals, using `reanalyse_p0.py` (CPU only, no torch). It also contains the
+**angle-lock test** that settles the padding question without assuming anything
+about the fill rule: unwatermarked images pass through the identical attack
+operator and lock onto the true angle 1-4% of the time, versus 100% for
+watermarked images on the same cells.
+
+It changed a few numbers: the operator stage's DFT-origin decoder cells go from
+0.033-0.217 to **0.100-0.250** (18 rows had locked onto the antipode but were
+scored as synced), rotation sigma=0.1 from 14.81% to 15.19%, one pareto cell from
+0.140 to 0.160. The headline numbers — pure rotation (1230 records, 5 failures)
+and the controls stack (8/800) — are unchanged.

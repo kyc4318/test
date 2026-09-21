@@ -317,6 +317,14 @@ Read these before quoting anything:
    `cv2_*_constant` vs `cv2_*_reflect` pairs in `run_unseen_operators.py`
    (`PADDING_PAIRS`) instead — same library, interpolation, matrix and output
    size, only the border rule changes.
+   **The padding question does have a positive, assumption-free answer**,
+   computed from the stored rows ([`reports/P0_reanalysis_mod360.md`](reports/P0_reanalysis_mod360.md)):
+   an unwatermarked image goes through the *identical* operator (same zero-filled
+   wedges, same interpolation, same inversion and search) and locks onto the true
+   angle only **1% (rot45) / 4% (rot75) / 2% (rot+noise)** of the time, while the
+   watermarked image locks on 100% (100/100 images). If the angle were readable
+   from the attack geometry, the null would lock on too. The matched
+   constant/reflect pair remains worth running as confirmation.
 8. **Scale / crop are out of scope.** The synchronizer is angular; scaling is a
    radial transform. That is a stated boundary, not an implementation bug.
 9. **Quality numbers are paired, not literature FID.** `reports/paper_pareto.md`
