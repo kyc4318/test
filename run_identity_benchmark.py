@@ -35,9 +35,9 @@ import numpy as np
 from tqdm import tqdm
 
 from p0_common import (OursCore, ResumeLog, SplitPlan, auc,
-                       calibrate_threshold, config_hash, make_config,
-                       provenance, rate_above, resolve_device, safe_print,
-                       search_grid, wilson, write_json)
+                       calibrate_threshold, case_rotation_angle, config_hash,
+                       make_config, provenance, rate_above, resolve_device,
+                       safe_print, search_grid, wilson, write_json)
 from paper_protocol import AttackCtx, apply_case, case_seed
 
 try:  # the script is GPU-only in practice, but keep import-time cost low
@@ -372,7 +372,13 @@ def main() -> None:
                             "key_space": int(space),
                             "n_keys_registered":
                                 adapter.describe()["n_keys_registered"],
-                            "true_angle": theta,
+                            # ``theta`` is the per-image random draw used by the
+                            # bare ``rot`` token; for literal tokens such as
+                            # ``rot45`` the angle actually applied is the
+                            # literal one, so store that (plus the raw draw).
+                            "true_angle": float(case_rotation_angle(case,
+                                                                    theta)),
+                            "theta": float(theta),
                             "id_correct_soft": float(
                                 res["pred_id_soft"] == int(kid)),
                             "id_correct_hard": float(

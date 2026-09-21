@@ -127,11 +127,15 @@ run_inversion_error_spectrum.py   where the inversion error goes (radial/angular
                              in/out of the carrier subspace)
 run_identity_benchmark.py    key-registry identification (ours included)
 run_capacity_quality_pareto.py    capacity x energy quality/robustness Pareto
+reanalyse_p0.py              offline re-scoring of the stored rows.jsonl
+                             (mod-360 sync + image-clustered intervals; CPU only)
 run_p0_queue.sh              generic stage queue
 run_p0_session.sh            the queue actually used for the reported runs
 
 results/design_searched_realgeom.npz   **canonical carrier** used by every result
 results/design_search_realgeom.json    its search metadata
+results/design_B{4,8,12,16}_s*.npz     capacity / multi-key variants (B8 has four
+                                       independent keys, used as wrong-key negatives)
 reports/                     the evidence chain + main tables (Chinese)
 ```
 
@@ -212,8 +216,10 @@ this repo. It is produced by:
 python search_design_realgeom.py            # CPU, a few minutes
 ```
 
-The capacity / multi-key variants are parameterized by payload length and seed
-and are **not** shipped, because they are exactly reproducible on CPU:
+The eight capacity / multi-key variants are **shipped** as well
+(`results/design_B{4,8,12,16}_s*.npz`, with the matching `.json` metadata), so the
+capacity and wrong-key experiments can be rerun without a search. They are
+parameterized by payload length and seed and can also be regenerated on CPU:
 
 ```bash
 for B in 4 8 12 16; do
@@ -223,6 +229,12 @@ for S in 1 2 3; do      # independent keys, used as wrong-key negatives
   python search_design_bits.py --bits 8 --seed $S --out_name design_B8_s${S} --out_dir results
 done
 ```
+
+> Note on reproducibility: `search_design_bits.py` is seeded, so the regeneration
+> is deterministic in principle, but the search steps depend on
+> `torch`/`torchvision` interpolation; a bit-identical regeneration under a
+> different framework build has **not** been verified. The shipped `.npz` files
+> are the ones that produced the reported numbers.
 
 ## External baselines are **not** vendored
 
@@ -313,23 +325,30 @@ Read these before quoting anything:
    "FID vs MS-COCO real images" numbers from the literature.
 10. **`run_p0_queue.sh` writes its `*_done.txt` marker even when a stage exits
     non-zero.** Check the `(rc=...)` in the log, not the marker.
-11. **The synchronization metrics default to mod-180, which this carrier does
+11. **The synchronization metrics defaulted to mod-180, which this carrier does
     not satisfy.** `p0_common.align_error` assumes a 180-degree flip is an
     equivalent alignment — true only for a *real* Hermitian carrier, which is
-    exactly what the complex phase mask breaks. A hypothesis at `true + 180` is
-    therefore a genuine failure, yet mod-180 scores it 0 error. Use
-    `align_error360` / `is_synced360` (added in this revision);
-    `run_continuous_rotation.py` and `run_unseen_operators.py` now record both.
-    The numbers currently printed in `reports/` are mod-180 and were produced
-    before the two metrics existed.
+    exactly what the complex phase mask breaks. A hypothesis at `true + 180` is a
+    genuine failure, yet mod-180 scores it 0 error. Use `align_error360` /
+    `is_synced360`; the scripts record both. **Recomputed on 2026-09-21** from the
+    stored `rows.jsonl` ([`reports/P0_reanalysis_mod360.md`](reports/P0_reanalysis_mod360.md)):
+    the operator stage had **18 rows that mod-180 scored as synced but which had
+    locked onto the antipode**, all in the `tv_bilinear_c32` (DFT-origin) decoder
+    cells — so that cell's failure rate is 0.100-0.250, not 0.033-0.217, i.e. the
+    half-pixel penalty is *larger* than first reported. The headline numbers are
+    unchanged: pure rotation (1230 records) still has 5 failures and no antipodal
+    lock-on, and the controls stack is still 8/800.
 12. **Record-level confidence intervals are too narrow for the rotation
     suites.** The 720-record rotation stack is 30 images x 24 angles, and the
     three sub-runs reuse the same 30 images. `bootstrap_ci` / `wilson` resample
-    *records*; use `clustered_stat_ci` / `clustered_rate_ci`
-    (image-level block bootstrap, also added in this revision). On synthetic data
-    shaped like the real runs the clustered interval is ~3x wider. So treat
+    *records*; use `clustered_stat_ci` / `clustered_rate_ci` (image-level block
+    bootstrap). **Recomputed**: e.g. rotation sigma=0.1 becomes
+    `[0.0778, 0.2481]` instead of the record-level `[0.111, 0.195]`. Treat
     "1230 pure-rotation samples, 0.41% failure" as "1230 (image, angle) records
-    from 30 images", not as 1230 independent draws.
+    from 30 images", not as 1230 independent draws. Note also that a clustered
+    bootstrap is degenerate when no image (or every image) contains an event; the
+    helper then falls back to a cluster-level Wilson interval, flagged by
+    `ci_degenerate`.
 13. **Product fusion is not normalised at runtime.** The manuscript formula is
     `prod_l S_l(gamma)/S_l(0)`, but `swm/dual_layer.py::score` and
     `OursCore.score_at` compute `prod_l S_l(gamma)`. The design searches

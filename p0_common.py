@@ -231,6 +231,14 @@ def clustered_rate_ci(flags: Sequence[float], groups: Sequence,
     Same rationale as :func:`clustered_stat_ci`: resampling records for a rate
     that is only replicated across ~30 images understates the uncertainty by
     roughly the square root of the records-per-image ratio.
+
+    Degenerate case: when *no* cluster (or every cluster) contains an event,
+    every bootstrap replicate is identical and the interval collapses to a
+    point -- which reads as "zero failures, zero uncertainty".  In that case the
+    reported interval falls back to a Wilson interval at the **cluster** level
+    (number of clusters containing at least one event out of the number of
+    clusters), which is conservative but informative.  ``ci_degenerate`` and
+    ``wilson_on_clusters`` are recorded so a reader can tell which happened.
     """
     arr = (np.asarray(list(flags), dtype=np.float64) > 0.5).astype(np.float64)
     if arr.size == 0:
@@ -238,6 +246,16 @@ def clustered_rate_ci(flags: Sequence[float], groups: Sequence,
     res = clustered_stat_ci(arr, groups, stat=np.mean, n_boot=n_boot,
                             seed=seed, alpha=alpha)
     res["k"] = int(arr.sum())
+    clusters = _cluster_groups(groups)
+    per_cluster = np.asarray([1.0 if arr[idx].max() > 0 else 0.0
+                              for idx in clusters], dtype=np.float64)
+    kc, nc = int(per_cluster.sum()), len(clusters)
+    _, lo_c, hi_c = wilson(kc, nc)
+    res["clusters_with_event"] = kc
+    res["wilson_on_clusters"] = [lo_c, hi_c]
+    res["ci_degenerate"] = bool(res["ci"][0] == res["ci"][1])
+    if res["ci_degenerate"]:
+        res["ci"] = [lo_c, hi_c]
     return res
 
 
